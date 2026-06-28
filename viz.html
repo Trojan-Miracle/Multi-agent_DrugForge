@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Prompt-to-Pill 可视化</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f1117; color: #e0e0e0; font-family: 'Consolas', monospace; display: flex; height: 100vh; }
+
+  /* 左侧 Agent 面板 */
+  #sidebar {
+    width: 200px; background: #1a1d27; padding: 16px 12px;
+    border-right: 1px solid #2a2d3e; overflow-y: auto; flex-shrink: 0;
+  }
+  #sidebar h2 { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  .agent-badge {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 6px; margin-bottom: 6px;
+    font-size: 12px; transition: background 0.2s;
+  }
+  .agent-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .agent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-count { font-size: 11px; color: #555; }
+
+  /* 主时间线 */
+  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #header {
+    padding: 14px 20px; background: #1a1d27; border-bottom: 1px solid #2a2d3e;
+    display: flex; align-items: center; gap: 12px;
+  }
+  #header h1 { font-size: 14px; font-weight: bold; }
+  #status { font-size: 12px; color: #555; }
+  #status.running { color: #4caf50; }
+  #timeline { flex: 1; overflow-y: auto; padding: 16px 20px; }
+
+  /* 消息卡片 */
+  .msg {
+    margin-bottom: 10px; padding: 10px 14px;
+    border-radius: 8px; border-left: 4px solid;
+    animation: fadein 0.2s ease;
+  }
+  @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+  .msg-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .msg-agent { font-size: 12px; font-weight: bold; }
+  .msg-type {
+    font-size: 10px; padding: 2px 6px; border-radius: 3px;
+    background: rgba(255,255,255,0.08); color: #999;
+  }
+  .msg-content { font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+  .msg-content.tool { color: #ffd700; }
+  .msg-content.result { color: #90ee90; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>Agents</h2>
+  <div id="agent-list"></div>
+</div>
+
+<div id="main">
+  <div id="header">
+    <h1>Prompt-to-Pill 实时可视化</h1>
+    <span id="status">等待连接...</span>
+  </div>
+  <div id="timeline"></div>
+</div>
+
+<script>
+const COLORS = {
+  planning_agent:            '#9c6fde',
+  druggen_agent:             '#4caf50',
+  chemical_agent:            '#2196f3',
+  admet_properties_agent:    '#ff9800',
+  molecule_optimization_agent: '#00bcd4',
+  trial_generator_agent:     '#f44336',
+  patient_matching_agent:    '#e91e63',
+  trial_prediction_agent:    '#ffc107',
+};
+const DEFAULT_COLOR = '#607d8b';
+
+const agentCounts = {};
+let lastId = -1;
+
+function colorOf(agent) {
+  return COLORS[agent] || DEFAULT_COLOR;
+}
+
+function updateSidebar(agent) {
+  agentCounts[agent] = (agentCounts[agent] || 0) + 1;
+  const list = document.getElementById('agent-list');
+  let badge = document.getElementById('badge-' + agent);
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'badge-' + agent;
+    badge.className = 'agent-badge';
+    badge.style.background = colorOf(agent) + '18';
+    badge.innerHTML = `
+      <div class="agent-dot" style="background:${colorOf(agent)}"></div>
+      <div class="agent-name" title="${agent}">${agent.replace('_agent','').replace('_',' ')}</div>
+      <div class="agent-count" id="count-${agent}">0</div>
+    `;
+    list.appendChild(badge);
+  }
+  document.getElementById('count-' + agent).textContent = agentCounts[agent];
+}
+
+function addMessage(msg) {
+  const color = colorOf(msg.agent);
+  const isToolCall = msg.content.includes('🔧');
+  const isToolResult = msg.content.includes('📤');
+
+  const div = document.createElement('div');
+  div.className = 'msg';
+  div.style.borderColor = color;
+  div.style.background = color + '12';
+
+  let contentClass = '';
+  if (isToolCall) contentClass = 'tool';
+  else if (isToolResult) contentClass = 'result';
+
+  div.innerHTML = `
+    <div class="msg-header">
+      <span class="msg-agent" style="color:${color}">${msg.agent}</span>
+      <span class="msg-type">${msg.type}</span>
+    </div>
+    <div class="msg-content ${contentClass}">${escHtml(msg.content)}</div>
+  `;
+
+  const timeline = document.getElementById('timeline');
+  timeline.appendChild(div);
+  timeline.scrollTop = timeline.scrollHeight;
+  updateSidebar(msg.agent);
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/messages');
+    const msgs = await r.json();
+    const newMsgs = msgs.filter(m => m.id > lastId);
+    newMsgs.forEach(addMessage);
+    if (newMsgs.length) lastId = newMsgs[newMsgs.length - 1].id;
+    document.getElementById('status').textContent = `运行中 · ${msgs.length} 条消息`;
+    document.getElementById('status').className = 'running';
+  } catch (e) {
+    document.getElementById('status').textContent = '等待服务器...';
+    document.getElementById('status').className = '';
+  }
+}
+
+setInterval(poll, 800);
+poll();
+</script>
+</body>
+</html>
