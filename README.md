@@ -130,7 +130,7 @@ $env:DEEPSEEK_API_KEY="sk-xxx..."    # Windows PowerShell
 启动：
 
 ```bash
-python Prompt_to_pill.py
+python DrugForge.py
 ```
 
 浏览器打开 `http://localhost:8765` 查看实时可视化，按回车开始运行后按提示输入任务，例如：
