@@ -141,6 +141,19 @@ python DrugForge.py
 
 ---
 
+## LangSmith 追踪（可选）
+
+在 [smith.langchain.com](https://smith.langchain.com) 注册后获取 API Key，设置以下环境变量即可启用完整调用链追踪：
+
+```bash
+$env:LANGCHAIN_API_KEY="ls-xxx..."   # Windows PowerShell
+export LANGCHAIN_API_KEY="ls-xxx..."  # Linux/macOS
+```
+
+启动后控制台会提示 `[LangSmith] 追踪已启用`，所有 Agent 调用、工具调用、token 消耗可在 LangSmith 面板查看。
+
+---
+
 ## 运行记录
 
 每次运行自动生成日志文件 `runs/{run_id}.json`，记录所有 Agent 消息。

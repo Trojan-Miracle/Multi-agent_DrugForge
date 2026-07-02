@@ -15,8 +15,8 @@ REQUIRED_BINARIES = [
 
 P2RANK_LAUNCHERS = ["pranker", "pranker.bat", "prank", "prank.bat"]
 
-CORE_PKGS = ["torch", "transformers", "rdkit", "autogen", "autogen_agentchat", "autogen_core", "autogen_ext",
-             "openai", "mcp", "llama_cpp"]
+CORE_PKGS = ["torch", "transformers", "rdkit", "openai", "mcp", "llama_cpp",
+             "langgraph", "langchain_openai", "langchain_mcp_adapters"]
 
 MCP_SERVERS = [
     "druggen_mcp_server.py",
