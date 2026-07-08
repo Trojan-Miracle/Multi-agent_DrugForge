@@ -12,13 +12,14 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, Tool
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import MemorySaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from state import RunState
 
 PROJECT_DIR = Path(__file__).parent
 
-# ── 可视化服务器 ─────────────────────────────────────────────────────────────
+# ── 可视化服务器 ──────────────────────────────────────────────────────────────
 
 messages_store: list = []
 _run: RunState | None = None
@@ -79,20 +80,21 @@ def _unwrap_json_blocks(s: str) -> str:
 
 def _validate_output():
     for msg in reversed(messages_store):
-        if msg["agent"] == "planning_agent" and "FINAL" in msg["content"]:
+        if "FINAL" in msg["content"]:
             if len(msg["content"]) > 200:
                 print("[验证] 最终报告完整", flush=True)
             else:
-                print("[验证] 警告：planning_agent 说了 FINAL 但报告内容过短", flush=True)
+                print("[验证] 警告：包含 FINAL 但报告内容过短", flush=True)
             return
-    print("[验证] 警告：未检测到 FINAL 报告，流程可能提前终止", flush=True)
+    print("[验证] 警告：未检测到 FINAL，流程可能提前终止", flush=True)
 
-# ── LangGraph 状态 ────────────────────────────────────────────────────────────
+# ── 状态定义 ──────────────────────────────────────────────────────────────────
 
 class DrugForgeState(TypedDict):
     messages: Annotated[list, add_messages]
-    next_agent: str
-    turns: int
+    opt_count: int       # 已完成的优化轮次
+    opt_satisfied: bool  # 当前优化是否满足条件
+    has_xml: bool        # 是否提供患者 XML 路径
 
 # ── 模型工厂 ──────────────────────────────────────────────────────────────────
 
@@ -108,260 +110,148 @@ def ds(thinking: bool = False, pro: bool = False) -> ChatOpenAI:
 
 # ── System Prompts ────────────────────────────────────────────────────────────
 
-PLANNING_SYS = """
-        你是规划agent。
-        你的职责是将复杂任务拆解为更小的可管理子任务。
-        你的团队成员包括：
-            1. druggen_agent：仅根据给定的UniProt ID生成药物SMILES，如果任务中未提供药物则使用它。
-            2. chemical_agent — 化学性质专家
-                 职责范围：预测/报告化学性质并返回先导化合物（不生成试验/药物）。
-                 可用工具：
-                   - select_leads_from_smiles(smiles_list)
-                   - predict_pka_batch(smiles_list)
-                   - logd_acid_batch(smiles_list, pH=7.4)
-                   - logd_base_batch(smiles_list, pH=7.4)
-                   - rdkit_physchem_batch(smiles_list, pH=7.4)
-                   - predict_all_batch(smiles_list, is_acid=None|bool, is_base=None|bool, pH=7.4)
-            3. admet_properties_agent — ADMET性质专家
-                 职责范围：预测/报告ADMET性质和对接；可解析名称/SMILES（不生成试验/药物）。
-                 选择主要先导化合物时只选一个（最佳的）。
-                 可用工具：
-                   - get_drug_name_from_smiles(smiles_list)
-                   - get_smiles_from_drug_name(drug_name)
-                   - chemfm_list_properties()
-                   - chemfm_get_description(property_name)
-                   - chemfm_predict_single(smiles, property_name)
-                   - chemfm_predict_many(smiles, properties_list)
-                   - run_docking(target, smiles_list)
-                 始终先规划chemfm_list_properties工具，以获取运行其他ADMET工具所需的精确性质名称。
-            4. molecule_optimization_agent：针对需要增加/减少的性质优化先导化合物。
-               必须传入ADMET或化学性质，不能传入对接相关参数。
-            5. trial_generation_agent：为给定的先导化合物生成临床试验，在需要生成试验时使用。
-               除非它是唯一需要的agent，否则始终在admet agent和chem agent之后最后调用。
-               始终以如下结构化格式返回：
-               - drug: SMILES和NAME
+PLANNING_START_SYS = """你是规划agent。分析用户的药物研发任务，制定总体研发策略，
+说明将要经历的阶段（分子生成→筛选→优化→临床），以及针对该靶点的具体研发重点。
+不要自己执行任何工具，只输出研发计划。"""
 
-CLINICAL TRIAL:
-- acronym: 字符串，简短研究名称
-- brief_title: 字符串
-- official_title: 字符串，描述性试验标题
-- study_status: 字符串（例如"Recruiting"、"Completed"）
-- study_start_date: 字符串，ISO格式（例如"2026-03"）
-- primary_completion_date: 字符串，ISO格式
-- completion_date: 字符串，ISO格式
-- condition: 字符串，研究的临床适应症
-- study_type: 字符串
-- phase: 字符串
-- intervention_model: 字符串
-- allocation: 字符串
-- masking: 字符串
-- enrollment: 整数
-- arms: 使用panacea_extract_components工具的输出
-- intervention_description: 字符串，必须通过SMILES引用该分子
-- primary_outcomes: 使用panacea_extract_components工具的输出
-- secondary_outcomes: 使用panacea_extract_components工具的输出
-- other_outcomes: 使用panacea_extract_components工具的输出
-- eligibility_criteria: 使用panacea_extract_components工具的输出
-- study_documents: 字符串列表
-- brief_summary: 字符串，对试验目的、设计、干预措施和入组资格的简洁描述。
-            6. patient_matching_agent：将患者与试验匹配。未提供XML患者摘要路径时不要规划此agent。
-               不要给它编造的试验摘要文本，严格使用trial_generation_agent生成的试验摘要文本。
-            7. trial_prediction_agent：根据trial_generation_agent的结构化输出预测试验成功概率。
+PLANNING_FINAL_SYS = """你是规划agent。整合所有agent的输出结果，写最终药物研发报告。
 
-        规则：
-            严格遵循以下药物开发任务工作流程：
-            - 药物发现阶段：
-              - 命中物生成：druggen_agent生成>10个SMILES。
-              - 对接：admet_properties_agent使用run_docking对命中物评分和筛选（保留评分最低的）。
-              - 先导化合物鉴定：chemical_agent进行理化性质计算和select_leads_from_smiles（应用Lipinski/Veber过滤）；admet_properties_agent评估10个相关ADMET性质。
-              - 选择单个最佳先导化合物（对接评分最低+通过过滤器+最佳ADMET，例如生物利用度>0.5，低hERG/肝毒性）。
-            - 先导化合物优化阶段：
-              - 对最佳先导化合物使用molecule_optimization_agent，针对薄弱性质（例如生物利用度<0.5时提高，降低毒性风险）。
-              - 重新评估：admet_properties_agent（对接+ADMET），chemical_agent（理化性质/Lipinski/Veber）。
-              - 循环：如果不满意，规划另一次优化。最多3次迭代；如果仍不满意，选择现有最佳并继续。
-            - 临床前阶段：用admet_properties_agent对优化后的先导化合物进行最终ADMET重新评估。
-            - 临床阶段：对最终先导化合物使用trial_generation_agent；如果有XML路径，使用patient_matching_agent；然后使用trial_prediction_agent。
-            - 最终报告格式：
-                药物发现性质：
-                - 命中物：[初始SMILES列表]
-                - 先导化合物：[带性质的已选先导化合物列表]
-                - 优化先导化合物：带优化性质的SMILES
-                - 化学性质：[来自chem agent的字典或列表]
-                - ADMET性质：[来自admet agent的字典或列表]
-                - 对接评分：[评分]
+报告格式：
+药物发现性质：
+- 命中物：[初始SMILES列表]
+- 先导化合物：[带性质的已选先导化合物]
+- 优化先导化合物：带优化性质的SMILES
+- 化学性质：[理化描述符]
+- ADMET性质：[预测结果]
+- 对接评分：[评分]
 
-                临床试验报告：
-                [来自trial agent的完整结构化试验]
+临床试验报告：[完整结构化试验]
 
-                患者匹配：[结果（如适用）]
+患者匹配：[结果（如有）]
 
-                试验成功概率：[概率]
+试验成功概率：[概率]
 
-                总结：[整体总结]
-            - 不要编造agent的响应。
-            - 所有任务完成后，以指定格式输出最终报告，并在最后单独一行写 FINAL。
-            - 除终止流程外，在任何计划说明中都不要出现"FINAL"。
-        """
+总结：[整体评价]
 
-DRUGGEN_SYS = """
-    你是药物生成专家。你的任务是根据指定的生物靶点设计新颖的SMILES分子。
-    你有一个工具run_druggen，可以根据给定的靶点返回药物SMILES。始终生成7个分子。
-    在任何情况下都不要进行性质预测、分子对接或自由文本生成。
-    只运行run_druggen工具并返回其结果。如果任务中已存在SMILES，则不要运行该工具。
-    """
+报告完成后在最后单独一行写：FINAL"""
 
-CHEM_PROPERTIES_SYS = """
-    你是化学性质专家。你的任务是预测并报告分子的化学性质。
-    在任何情况下都不要进行临床试验生成、药物生成、ADMET预测或分子对接。
-    你有以下工具：
-        - select_leads_from_smiles(smiles_list, n)：根据Lipinski/Veber规则筛选n个先导化合物。
-        - predict_pka_batch：预测SMILES列表的pKa值。
-        - logd_acid_batch / logd_base_batch：计算logD值。
-        - rdkit_physchem_batch：计算理化描述符（MW、logP、TPSA、HBD、HBA、RotB、QED等）。
-        - predict_all_batch：整合以上所有功能。
-    """
+DRUGGEN_SYS = """你是药物生成专家。根据给定的 UniProt ID 生成候选分子 SMILES。
+始终生成7个分子，只运行 run_druggen 工具并返回结果，不做任何其他操作。"""
 
-ADMET_PROPERTIES_SYS = """
-    你是ADMET性质专家。你的任务是预测并报告分子的ADMET性质。
-    在任何情况下都不要生成临床试验、药物或自由文本。始终先运行chemfm_list_properties获取精确的性质名称。
-    选择10个最相关的ADMET性质（例如口服生物利用度、溶解度、清除率、BBB通透性、hERG抑制、肝毒性）。
-    你有以下工具：
-        - get_drug_name_from_smiles(smiles)
-        - get_smiles_from_drug_name
-        - chemfm_list_properties
-        - chemfm_get_description(property_name)
-        - chemfm_predict_single(smiles, property_name)
-        - chemfm_predict_many(smiles, properties)
-        - run_docking：执行分子对接，评分越低越好。
-    """
+CHEM_PROPERTIES_SYS = """你是化学性质专家。预测并报告分子的理化性质，筛选先导化合物。
+按 Lipinski（MW≤500, logP≤5, HBD≤5, HBA≤10）和 Veber（RotB≤10, TPSA≤140）规则筛选。
+工具：select_leads_from_smiles, rdkit_physchem_batch, predict_pka_batch,
+      logd_acid_batch, logd_base_batch, predict_all_batch。
+不做 ADMET 预测、对接或临床试验生成。"""
 
-MOL_OPT_SYS = """
-    你是分子优化专家。你有一个工具：
-      - molecule_optimizer(smiles, properties, action)：输入SMILES、需要优化的性质以及期望的动作（increase或decrease）。
-    不要生成临床试验或药物，不要预测性质或对接评分。只返回工具结果。
-    如果ADMET和化学性质尚未预测和评估，则不要运行。
-    """
+ADMET_PROPERTIES_SYS = """你是 ADMET 性质专家。预测分子的 ADMET 性质和对接评分。
+始终先运行 chemfm_list_properties 获取性质名称，再预测10个最相关性质
+（口服生物利用度、溶解度、清除率、BBB通透性、hERG抑制、肝毒性等）。
+工具：chemfm_list_properties, chemfm_get_description, chemfm_predict_single,
+      chemfm_predict_many, run_docking, get_drug_name_from_smiles, get_smiles_from_drug_name。
+不做临床试验生成或分子生成。"""
 
-TRIAL_SYS = """
-    你是临床试验设计专家。
-    你的任务是为药物生成真实的临床试验方案。如果药物由druggen agent生成，使用对接评分最低的药物。
-    你不能预测性质、执行对接或生成分子。
-    你必须在有SMILES或药物名称的情况下生成试验。
+MOL_OPT_SYS = """你是分子优化专家。针对性质薄弱点优化先导化合物。
+工具：molecule_optimizer(smiles, properties, action)，action 为 increase 或 decrease。
+只在已有 ADMET 和化学性质评估结果后才运行，只返回工具结果。"""
 
-    首先，按以下格式输出初始试验文本：
-- drug: SMILES（如有名称则附上NAME）
+TRIAL_SYS = """你是临床试验设计专家。为最终先导化合物生成完整临床试验方案。
+先输出初始试验文本，再调用 panacea_extract_components 工具生成结构化组件，
+最后输出包含 arms、outcomes、eligibility_criteria 等完整字段的结构化试验报告。"""
 
-CLINICAL TRIAL:
-- acronym: 字符串
-- brief_title: 字符串
-- official_title: 字符串
-- study_status: 字符串
-- study_start_date: ISO格式
-- primary_completion_date: ISO格式
-- completion_date: ISO格式
-- condition: 字符串
-- study_type: 字符串
-- phase: 字符串
-- enrollment: 整数
+PATIENT_MATCHING_SYS = """你是患者匹配专家。
+工具：match_patient_trial(xml_path, trial_text)。
+使用 trial_generator_agent 生成的精确试验文本，返回匹配患者数量和 ID 列表。"""
 
-    然后，以整段文本作为trial_text参数调用panacea_extract_components工具，构建完整结构化报告。
-    """
+TRIAL_PRED_SYS = """你是试验预测专家。根据结构化试验文本预测临床试验成功概率（0-1）。
+只返回概率数值，不做其他操作。"""
 
-PATIENT_MATCHING_SYS = """
-    你是患者匹配专家。你有一个工具：
-        - match_patient_trial(xml_path: str, trial_text: str)：将患者与试验进行匹配。
-        在未提供XML患者摘要路径的情况下，不要运行此工具。
-    使用trial_generation_agent提供的精确结构化试验文本。
-    返回匹配患者数量和匹配患者ID列表。
-    """
+# ── Agent 节点工厂 ────────────────────────────────────────────────────────────
 
-TRIAL_PRED_SYS = """
-    你是试验预测Agent。根据提供的试验文本预测试验成功概率。
-    只返回概率分数（例如0.75）。不要生成试验或药物，不要预测性质或对接评分。只返回工具结果。
-    """
-
-SUPERVISOR_PROMPT = """你是任务调度器，负责决定下一个发言的 agent。
-
-可用 agents：
-- planning_agent：规划与调度，任务开始时最先介入，所有任务完成后输出最终报告并写 FINAL
-- druggen_agent：根据 UniProt ID 生成候选分子 SMILES
-- chemical_agent：理化性质计算，Lipinski/Veber 先导化合物筛选
-- admet_properties_agent：ADMET 预测和分子对接评分
-- molecule_optimization_agent：先导化合物结构优化（最多 3 次）
-- trial_generator_agent：临床试验方案生成
-- patient_matching_agent：患者-试验匹配（需提供 XML 路径）
-- trial_prediction_agent：临床试验成功率预测
-
-根据对话历史严格遵循 planning_agent 的计划，选择下一个 agent。
-只回答 agent 的名字，不要加任何解释。"""
-
-AGENT_NAMES = {
-    "planning_agent", "druggen_agent", "chemical_agent", "admet_properties_agent",
-    "molecule_optimization_agent", "trial_generator_agent",
-    "patient_matching_agent", "trial_prediction_agent",
-}
-
-# ── Graph 构建 ────────────────────────────────────────────────────────────────
-
-def make_agent_node(name: str, agent):
+def make_agent_node(display_name: str, agent):
     async def node(state: DrugForgeState) -> dict:
         result = await agent.ainvoke({"messages": state["messages"]})
         new_msgs = result["messages"][len(state["messages"]):]
         return {"messages": new_msgs}
-    node.__name__ = name
+    node.__name__ = display_name
     return node
 
-def build_graph(agent_nodes: dict, selector_llm: ChatOpenAI):
-    async def supervisor_node(state: DrugForgeState) -> dict:
-        messages = state["messages"]
-        turns = state.get("turns", 0)
+# ── 图构建 ────────────────────────────────────────────────────────────────────
 
-        if turns >= 30:
-            return {"next_agent": END, "turns": turns + 1}
+def build_graph(nodes: dict, eval_llm: ChatOpenAI):
 
-        for msg in reversed(messages[-5:]):
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            if "FINAL" in content:
-                return {"next_agent": END, "turns": turns + 1}
-
-        response = await selector_llm.ainvoke([
-            SystemMessage(content=SUPERVISOR_PROMPT),
-            *messages,
-            HumanMessage(content="下一个agent是谁？只回答名字。"),
+    # 优化评估节点：判断当前先导化合物是否满足条件
+    async def eval_opt(state: DrugForgeState) -> dict:
+        resp = await eval_llm.ainvoke([
+            SystemMessage(content="""根据最近的 ADMET 和化学性质评估结果，
+判断当前优化的先导化合物是否同时满足：通过 Lipinski/Veber 规则、口服生物利用度>0.5、低毒性风险。
+只回答 satisfied 或 continue，不要加任何其他内容。"""),
+            *state["messages"][-12:],
         ])
-        next_agent = response.content.strip().split()[0]
-        if next_agent not in AGENT_NAMES:
-            next_agent = END
-        return {"next_agent": next_agent, "turns": turns + 1}
+        satisfied = "satisfied" in resp.content.lower()
+        return {
+            "opt_satisfied": satisfied,
+            "opt_count": state.get("opt_count", 0) + 1,
+        }
 
-    def route(state: DrugForgeState) -> str:
-        n = state.get("next_agent", END)
-        return n if n in agent_nodes else END
+    # 路由：优化循环是否继续
+    def route_opt(state: DrugForgeState) -> str:
+        if state["opt_satisfied"] or state.get("opt_count", 0) >= 3:
+            return "admet_final"
+        return "mol_opt_agent"
 
-    workflow = StateGraph(DrugForgeState)
-    workflow.add_node("supervisor", supervisor_node)
-    for name, node in agent_nodes.items():
-        workflow.add_node(name, node)
+    # 路由：临床阶段是否有患者数据（并行 vs 单路）
+    def route_clinical(state: DrugForgeState) -> list[str]:
+        if state.get("has_xml"):
+            return ["patient_matching_agent", "trial_prediction_agent"]
+        return ["trial_prediction_agent"]
 
-    workflow.set_entry_point("supervisor")
-    workflow.add_conditional_edges("supervisor", route, {**{n: n for n in agent_nodes}, END: END})
-    for name in agent_nodes:
-        workflow.add_edge(name, "supervisor")
+    wf = StateGraph(DrugForgeState)
 
-    return workflow.compile()
+    # 注册所有节点
+    for name, node in nodes.items():
+        wf.add_node(name, node)
+    wf.add_node("eval_opt", eval_opt)
 
-# ── 可视化流 ──────────────────────────────────────────────────────────────────
+    # ── 固定主干流程 ──
+    wf.set_entry_point("planning_start")
+    wf.add_edge("planning_start", "druggen_agent")
+    wf.add_edge("druggen_agent", "admet_docking")       # 对接初筛
+    wf.add_edge("admet_docking", "chemical_filter")     # Lipinski/Veber 筛选
+    wf.add_edge("chemical_filter", "admet_predict")     # ADMET 预测，选先导化合物
 
-async def run_with_viz(graph, task: str):
-    initial = {
-        "messages": [HumanMessage(content=task)],
-        "next_agent": "",
-        "turns": 0,
-    }
-    async for update in graph.astream(initial, stream_mode="updates"):
+    # ── 优化循环（Human-in-the-loop 在 mol_opt_agent 前暂停）──
+    wf.add_edge("admet_predict", "mol_opt_agent")
+    wf.add_edge("mol_opt_agent", "admet_reeval")        # 优化后重新对接+ADMET
+    wf.add_edge("admet_reeval", "chem_reeval")          # 优化后重新化学筛选
+    wf.add_edge("chem_reeval", "eval_opt")              # 评估是否满足条件
+    wf.add_conditional_edges("eval_opt", route_opt, {
+        "mol_opt_agent": "mol_opt_agent",               # 不满足且次数<3：继续优化
+        "admet_final": "admet_final",                   # 满足或达到3次：进入临床前
+    })
+
+    # ── 临床前 + 临床阶段 ──
+    wf.add_edge("admet_final", "trial_generator_agent")
+    wf.add_conditional_edges("trial_generator_agent", route_clinical, {
+        "patient_matching_agent": "patient_matching_agent",   # 并行分支1
+        "trial_prediction_agent": "trial_prediction_agent",   # 并行分支2（或唯一）
+    })
+    wf.add_edge("patient_matching_agent", "planning_final")   # 并行汇入
+    wf.add_edge("trial_prediction_agent", "planning_final")   # 并行汇入
+    wf.add_edge("planning_final", END)
+
+    # MemorySaver 支持断点续跑；interrupt_before 在每次优化前暂停等用户确认
+    checkpointer = MemorySaver()
+    return wf.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["mol_opt_agent"],
+    )
+
+# ── 可视化流（支持中断恢复）────────────────────────────────────────────────────
+
+async def _stream_to_viz(graph, input_val, config: dict):
+    async for update in graph.astream(input_val, config=config, stream_mode="updates"):
         for node_name, output in update.items():
-            if node_name == "supervisor":
-                continue
             for msg in output.get("messages", []):
                 if isinstance(msg, AIMessage):
                     content = msg.content if isinstance(msg.content, str) else str(msg.content)
@@ -374,6 +264,26 @@ async def run_with_viz(graph, task: str):
                         content = content[:500] + "..."
                     await broadcast(node_name, "ToolResult", f"[工具结果] {content}")
 
+async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
+    initial = {
+        "messages": [HumanMessage(content=task)],
+        "opt_count": 0,
+        "opt_satisfied": False,
+        "has_xml": has_xml,
+    }
+
+    await _stream_to_viz(graph, initial, config)
+
+    # 处理中断：每次 mol_opt_agent 前暂停，等用户确认
+    while True:
+        state = graph.get_state(config)
+        if not state.next:   # 流程自然结束
+            break
+        opt_n = state.values.get("opt_count", 0)
+        print(f"\n[优化循环 {opt_n + 1}/3] 查看当前先导化合物结果，按回车继续优化...", flush=True)
+        input()
+        await _stream_to_viz(graph, None, config)   # None = 从断点继续
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
@@ -383,8 +293,6 @@ async def main():
         os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
         os.environ.setdefault("LANGCHAIN_PROJECT", "DrugForge")
         print("[LangSmith] 追踪已启用", flush=True)
-    else:
-        print("[LangSmith] 未设置 LANGCHAIN_API_KEY，追踪关闭", flush=True)
 
     servers = {
         "druggen":     {"command": sys.executable, "args": ["druggen_mcp_server.py"],            "transport": "stdio", "cwd": str(PROJECT_DIR)},
@@ -405,55 +313,63 @@ async def main():
         def select(*names):
             return [tool_map[n] for n in names if n in tool_map]
 
-        agent_nodes = {
-            "planning_agent": make_agent_node("planning_agent", create_react_agent(
-                ds(thinking=True), [], prompt=PLANNING_SYS,
-            )),
-            "druggen_agent": make_agent_node("druggen_agent", create_react_agent(
-                ds(), select("run_druggen"), prompt=DRUGGEN_SYS,
-            )),
-            "chemical_agent": make_agent_node("chemical_agent", create_react_agent(
-                ds(),
-                select("select_leads_from_smiles", "predict_pka_batch", "logd_acid_batch",
-                       "logd_base_batch", "rdkit_physchem_batch", "predict_all_batch"),
-                prompt=CHEM_PROPERTIES_SYS,
-            )),
-            "admet_properties_agent": make_agent_node("admet_properties_agent", create_react_agent(
-                ds(),
-                select("get_drug_name_from_smiles", "get_smiles_from_drug_name",
-                       "chemfm_list_properties", "chemfm_get_description",
-                       "chemfm_predict_single", "chemfm_predict_many", "run_docking"),
-                prompt=ADMET_PROPERTIES_SYS,
-            )),
-            "molecule_optimization_agent": make_agent_node("molecule_optimization_agent", create_react_agent(
-                ds(thinking=True), select("molecule_optimizer"), prompt=MOL_OPT_SYS,
-            )),
-            "trial_generator_agent": make_agent_node("trial_generator_agent", create_react_agent(
-                ds(thinking=True), select("panacea_extract_components"), prompt=TRIAL_SYS,
-            )),
-            "patient_matching_agent": make_agent_node("patient_matching_agent", create_react_agent(
-                ds(), select("match_patient_trial"), prompt=PATIENT_MATCHING_SYS,
-            )),
-            "trial_prediction_agent": make_agent_node("trial_prediction_agent", create_react_agent(
-                ds(), [t for t in all_tools if t not in select(
-                    "run_druggen", "select_leads_from_smiles", "predict_pka_batch",
-                    "logd_acid_batch", "logd_base_batch", "rdkit_physchem_batch",
-                    "predict_all_batch", "get_drug_name_from_smiles", "get_smiles_from_drug_name",
-                    "chemfm_list_properties", "chemfm_get_description", "chemfm_predict_single",
-                    "chemfm_predict_many", "run_docking", "molecule_optimizer",
-                    "panacea_extract_components", "match_patient_trial",
-                )], prompt=TRIAL_PRED_SYS,
-            )),
+        # 为每个流程节点创建 agent（同一个 runnable 可复用为多个节点）
+        planning_r   = create_react_agent(ds(thinking=True), [], prompt=PLANNING_START_SYS)
+        planning_f_r = create_react_agent(ds(thinking=True), [], prompt=PLANNING_FINAL_SYS)
+        druggen_r    = create_react_agent(ds(), select("run_druggen"), prompt=DRUGGEN_SYS)
+        chem_r       = create_react_agent(ds(), select(
+            "select_leads_from_smiles", "predict_pka_batch", "logd_acid_batch",
+            "logd_base_batch", "rdkit_physchem_batch", "predict_all_batch",
+        ), prompt=CHEM_PROPERTIES_SYS)
+        admet_r      = create_react_agent(ds(), select(
+            "get_drug_name_from_smiles", "get_smiles_from_drug_name",
+            "chemfm_list_properties", "chemfm_get_description",
+            "chemfm_predict_single", "chemfm_predict_many", "run_docking",
+        ), prompt=ADMET_PROPERTIES_SYS)
+        mol_opt_r    = create_react_agent(ds(thinking=True), select("molecule_optimizer"), prompt=MOL_OPT_SYS)
+        trial_gen_r  = create_react_agent(ds(thinking=True), select("panacea_extract_components"), prompt=TRIAL_SYS)
+        patient_r    = create_react_agent(ds(), select("match_patient_trial"), prompt=PATIENT_MATCHING_SYS)
+        known = {
+            "run_druggen", "select_leads_from_smiles", "predict_pka_batch", "logd_acid_batch",
+            "logd_base_batch", "rdkit_physchem_batch", "predict_all_batch",
+            "get_drug_name_from_smiles", "get_smiles_from_drug_name", "chemfm_list_properties",
+            "chemfm_get_description", "chemfm_predict_single", "chemfm_predict_many", "run_docking",
+            "molecule_optimizer", "panacea_extract_components", "match_patient_trial",
+        }
+        trial_pred_r = create_react_agent(
+            ds(), [t for t in all_tools if t.name not in known], prompt=TRIAL_PRED_SYS
+        )
+
+        nodes = {
+            # 药物发现
+            "planning_start":          make_agent_node("planning_agent",              planning_r),
+            "druggen_agent":           make_agent_node("druggen_agent",               druggen_r),
+            "admet_docking":           make_agent_node("admet_properties_agent",      admet_r),
+            "chemical_filter":         make_agent_node("chemical_agent",              chem_r),
+            "admet_predict":           make_agent_node("admet_properties_agent",      admet_r),
+            # 优化循环（interrupt_before mol_opt_agent）
+            "mol_opt_agent":           make_agent_node("molecule_optimization_agent", mol_opt_r),
+            "admet_reeval":            make_agent_node("admet_properties_agent",      admet_r),
+            "chem_reeval":             make_agent_node("chemical_agent",              chem_r),
+            # 临床前 + 临床
+            "admet_final":             make_agent_node("admet_properties_agent",      admet_r),
+            "trial_generator_agent":   make_agent_node("trial_generator_agent",       trial_gen_r),
+            "patient_matching_agent":  make_agent_node("patient_matching_agent",      patient_r),
+            "trial_prediction_agent":  make_agent_node("trial_prediction_agent",      trial_pred_r),
+            "planning_final":          make_agent_node("planning_agent",              planning_f_r),
         }
 
-        graph = build_graph(agent_nodes, ds())
+        graph = build_graph(nodes, ds())
 
         task = input("请输入你的任务：").strip() or "模拟DPP4(P27487)的药物开发"
+        has_xml = ".xml" in task or "xml" in task.lower()
 
         global _run
         _run = RunState(task=task)
         run: RunState = _run
         print(f"Run ID: {run.run_id}", flush=True)
+
+        config = {"configurable": {"thread_id": run.run_id}}
 
         threading.Thread(target=start_viz_server, daemon=True).start()
         print("\n可视化面板：http://localhost:8765", flush=True)
@@ -461,7 +377,7 @@ async def main():
         input()
 
         try:
-            await run_with_viz(graph, task)
+            await run_with_viz(graph, task, has_xml, config)
             _validate_output()
             run.done()
         except Exception as e:
