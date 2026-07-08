@@ -104,7 +104,7 @@ DrugForge 是一个基于 **LangGraph StateGraph** 的端到端药物研发模�
 | **工具权限** | 每个 Agent 只绑定专属工具列表 | 防止 Agent 越权调用 |
 | **输出验证** | `_validate_output()` | 流程结束后检查最终报告是否完整 |
 | **运行日志** | `state.py` + `runs/{run_id}.json` | 实时记录所有 Agent 消息，支持历史回放 |
-| **Human-in-the-loop** | `MemorySaver` + `interrupt_before` | 每次优化前暂停等用户确认，按回车继续 |
+| **Human-in-the-loop** | `MemorySaver` + `interrupt_before` + 浏览器确认按钮 | 每次优化前暂停，浏览器面板点击"确认"继续 |
 
 ---
 
@@ -158,7 +158,7 @@ python DrugForge.py
 模拟DPP4(P27487)的药物开发
 ```
 
-优化阶段会暂停等待确认，按回车继续。
+优化阶段会暂停，在浏览器可视化面板底部点击"确认继续优化"按钮即可继续。
 
 ---
 

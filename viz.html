@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<title>Prompt-to-Pill 可视化</title>
+<title>DrugForge 可视化</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0f1117; color: #e0e0e0; font-family: 'Consolas', monospace; display: flex; height: 100vh; }
@@ -31,7 +31,7 @@
   #header h1 { font-size: 14px; font-weight: bold; }
   #status { font-size: 12px; color: #555; }
   #status.running { color: #4caf50; }
-  #timeline { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  #timeline { flex: 1; overflow-y: auto; padding: 16px 20px; padding-bottom: 80px; }
 
   /* 消息卡片 */
   .msg {
@@ -49,6 +49,25 @@
   .msg-content { font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
   .msg-content.tool { color: #ffd700; }
   .msg-content.result { color: #90ee90; }
+
+  /* Human-in-the-loop 确认浮层 */
+  #confirm-bar {
+    display: none;
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #0d1f0d; border: 2px solid #4caf50; border-radius: 14px;
+    padding: 16px 32px; text-align: center; z-index: 100;
+    box-shadow: 0 0 32px rgba(76,175,80,0.25);
+    animation: popIn 0.25s ease;
+  }
+  @keyframes popIn { from { opacity:0; transform: translateX(-50%) translateY(12px); } to { opacity:1; transform: translateX(-50%) translateY(0); } }
+  #confirm-msg { color: #aaa; font-size: 12px; margin-bottom: 12px; }
+  #confirm-btn {
+    background: #4caf50; color: #fff; border: none; border-radius: 8px;
+    padding: 10px 32px; font-size: 14px; font-weight: bold; cursor: pointer;
+    font-family: 'Consolas', monospace; letter-spacing: 0.5px; transition: background 0.15s;
+  }
+  #confirm-btn:hover:not(:disabled) { background: #66bb6a; }
+  #confirm-btn:disabled { background: #2a4a2a; color: #555; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -60,22 +79,30 @@
 
 <div id="main">
   <div id="header">
-    <h1>Prompt-to-Pill 实时可视化</h1>
+    <h1>DrugForge 实时可视化</h1>
     <span id="status">等待连接...</span>
   </div>
   <div id="timeline"></div>
 </div>
 
+<!-- Human-in-the-loop 确认浮层 -->
+<div id="confirm-bar">
+  <div id="confirm-msg">先导化合物已选出，确认后继续优化</div>
+  <button id="confirm-btn" onclick="confirmContinue()">确认继续优化</button>
+</div>
+
 <script>
 const COLORS = {
-  planning_agent:            '#9c6fde',
-  druggen_agent:             '#4caf50',
-  chemical_agent:            '#2196f3',
-  admet_properties_agent:    '#ff9800',
-  molecule_optimization_agent: '#00bcd4',
-  trial_generator_agent:     '#f44336',
-  patient_matching_agent:    '#e91e63',
-  trial_prediction_agent:    '#ffc107',
+  planning_agent:               '#9c6fde',
+  druggen_agent:                '#4caf50',
+  chemical_agent:               '#2196f3',
+  admet_properties_agent:       '#ff9800',
+  molecule_optimization_agent:  '#00bcd4',
+  trial_generator_agent:        '#f44336',
+  patient_matching_agent:       '#e91e63',
+  trial_prediction_agent:       '#ffc107',
+  eval_opt:                     '#9e9e9e',
+  system:                       '#607d8b',
 };
 const DEFAULT_COLOR = '#607d8b';
 
@@ -87,6 +114,7 @@ function colorOf(agent) {
 }
 
 function updateSidebar(agent) {
+  if (agent === 'system') return;
   agentCounts[agent] = (agentCounts[agent] || 0) + 1;
   const list = document.getElementById('agent-list');
   let badge = document.getElementById('badge-' + agent);
@@ -97,7 +125,7 @@ function updateSidebar(agent) {
     badge.style.background = colorOf(agent) + '18';
     badge.innerHTML = `
       <div class="agent-dot" style="background:${colorOf(agent)}"></div>
-      <div class="agent-name" title="${agent}">${agent.replace('_agent','').replace('_',' ')}</div>
+      <div class="agent-name" title="${agent}">${agent.replace('_agent','').replace(/_/g,' ')}</div>
       <div class="agent-count" id="count-${agent}">0</div>
     `;
     list.appendChild(badge);
@@ -106,9 +134,24 @@ function updateSidebar(agent) {
 }
 
 function addMessage(msg) {
+  // Human-in-the-loop：显示浮层，不在时间线展示
+  if (msg.type === 'WaitingConfirm') {
+    document.getElementById('confirm-msg').textContent = msg.content;
+    const btn = document.getElementById('confirm-btn');
+    btn.disabled = false;
+    btn.textContent = '确认继续优化';
+    document.getElementById('confirm-bar').style.display = 'block';
+    return;
+  }
+
+  // 收到继续信号后隐藏确认栏
+  if (msg.type === 'System' && msg.agent === 'system') {
+    document.getElementById('confirm-bar').style.display = 'none';
+  }
+
   const color = colorOf(msg.agent);
   const isToolCall = msg.content.includes('🔧');
-  const isToolResult = msg.content.includes('📤');
+  const isToolResult = msg.content.includes('📤') || msg.type === 'ToolResult';
 
   const div = document.createElement('div');
   div.className = 'msg';
@@ -137,6 +180,19 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+async function confirmContinue() {
+  const btn = document.getElementById('confirm-btn');
+  btn.disabled = true;
+  btn.textContent = '发送中...';
+  try {
+    await fetch('/confirm', { method: 'POST' });
+    document.getElementById('confirm-bar').style.display = 'none';
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '确认继续优化';
+  }
+}
+
 async function poll() {
   try {
     const r = await fetch('/messages');
@@ -144,7 +200,8 @@ async function poll() {
     const newMsgs = msgs.filter(m => m.id > lastId);
     newMsgs.forEach(addMessage);
     if (newMsgs.length) lastId = newMsgs[newMsgs.length - 1].id;
-    document.getElementById('status').textContent = `运行中 · ${msgs.length} 条消息`;
+    const visible = msgs.filter(m => m.type !== 'WaitingConfirm').length;
+    document.getElementById('status').textContent = `运行中 · ${visible} 条消息`;
     document.getElementById('status').className = 'running';
   } catch (e) {
     document.getElementById('status').textContent = '等待服务器...';

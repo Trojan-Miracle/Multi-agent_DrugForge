@@ -23,6 +23,8 @@ PROJECT_DIR = Path(__file__).parent
 
 messages_store: list = []
 _run: RunState | None = None
+_confirm_event: asyncio.Event | None = None
+_main_loop: asyncio.AbstractEventLoop | None = None
 
 class VizHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -39,6 +41,19 @@ class VizHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(data)
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length:
+            self.rfile.read(content_length)
+        if self.path == "/confirm":
+            if _main_loop and _confirm_event:
+                _main_loop.call_soon_threadsafe(_confirm_event.set)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
 
     def log_message(self, format, *args):
         pass
@@ -95,6 +110,12 @@ class DrugForgeState(TypedDict):
     opt_count: int       # 已完成的优化轮次
     opt_satisfied: bool  # 当前优化是否满足条件
     has_xml: bool        # 是否提供患者 XML 路径
+
+# OptState 与 DrugForgeState 共享字段，供优化子图使用
+class OptState(TypedDict):
+    messages: Annotated[list, add_messages]
+    opt_count: int
+    opt_satisfied: bool
 
 # ── 模型工厂 ──────────────────────────────────────────────────────────────────
 
@@ -169,19 +190,24 @@ TRIAL_PRED_SYS = """你是试验预测专家。根据结构化试验文本预测
 # ── Agent 节点工厂 ────────────────────────────────────────────────────────────
 
 def make_agent_node(display_name: str, agent):
-    async def node(state: DrugForgeState) -> dict:
+    async def node(state) -> dict:
         result = await agent.ainvoke({"messages": state["messages"]})
         new_msgs = result["messages"][len(state["messages"]):]
         return {"messages": new_msgs}
     node.__name__ = display_name
     return node
 
-# ── 图构建 ────────────────────────────────────────────────────────────────────
+# ── 优化子图 ──────────────────────────────────────────────────────────────────
 
-def build_graph(nodes: dict, eval_llm: ChatOpenAI):
+def build_opt_subgraph(opt_nodes: dict, eval_llm: ChatOpenAI):
+    """把 mol_opt → admet_reeval → chem_reeval → eval_opt 循环提取为独立子图。
 
-    # 优化评估节点：判断当前先导化合物是否满足条件
-    async def eval_opt(state: DrugForgeState) -> dict:
+    子图不带 checkpointer（由父图的 MemorySaver 统一管理），
+    interrupt_before=["mol_opt_agent"] 会通过父图的 checkpointer 向上传播，
+    使父图在每次进入优化前暂停，等待浏览器确认按钮触发继续。
+    """
+
+    async def eval_opt(state: OptState) -> dict:
         resp = await eval_llm.ainvoke([
             SystemMessage(content="""根据最近的 ADMET 和化学性质评估结果，
 判断当前优化的先导化合物是否同时满足：通过 Lipinski/Veber 规则、口服生物利用度>0.5、低毒性风险。
@@ -194,13 +220,33 @@ def build_graph(nodes: dict, eval_llm: ChatOpenAI):
             "opt_count": state.get("opt_count", 0) + 1,
         }
 
-    # 路由：优化循环是否继续
-    def route_opt(state: DrugForgeState) -> str:
+    def route_opt(state: OptState) -> str:
         if state["opt_satisfied"] or state.get("opt_count", 0) >= 3:
-            return "admet_final"
+            return END
         return "mol_opt_agent"
 
-    # 路由：临床阶段是否有患者数据（并行 vs 单路）
+    g = StateGraph(OptState)
+    g.add_node("mol_opt_agent", opt_nodes["mol_opt_agent"])
+    g.add_node("admet_reeval",  opt_nodes["admet_reeval"])
+    g.add_node("chem_reeval",   opt_nodes["chem_reeval"])
+    g.add_node("eval_opt",      eval_opt)
+
+    g.set_entry_point("mol_opt_agent")
+    g.add_edge("mol_opt_agent", "admet_reeval")
+    g.add_edge("admet_reeval",  "chem_reeval")
+    g.add_edge("chem_reeval",   "eval_opt")
+    g.add_conditional_edges("eval_opt", route_opt, {
+        "mol_opt_agent": "mol_opt_agent",
+        END: END,
+    })
+
+    # interrupt_before 设在子图内，父图 checkpointer 会捕获并向上冒泡
+    return g.compile(interrupt_before=["mol_opt_agent"])
+
+# ── 图构建 ────────────────────────────────────────────────────────────────────
+
+def build_graph(nodes: dict, opt_subgraph):
+
     def route_clinical(state: DrugForgeState) -> list[str]:
         if state.get("has_xml"):
             return ["patient_matching_agent", "trial_prediction_agent"]
@@ -208,49 +254,38 @@ def build_graph(nodes: dict, eval_llm: ChatOpenAI):
 
     wf = StateGraph(DrugForgeState)
 
-    # 注册所有节点
     for name, node in nodes.items():
         wf.add_node(name, node)
-    wf.add_node("eval_opt", eval_opt)
+    wf.add_node("optimization_loop", opt_subgraph)
 
     # ── 固定主干流程 ──
     wf.set_entry_point("planning_start")
-    wf.add_edge("planning_start", "druggen_agent")
-    wf.add_edge("druggen_agent", "admet_docking")       # 对接初筛
-    wf.add_edge("admet_docking", "chemical_filter")     # Lipinski/Veber 筛选
-    wf.add_edge("chemical_filter", "admet_predict")     # ADMET 预测，选先导化合物
-
-    # ── 优化循环（Human-in-the-loop 在 mol_opt_agent 前暂停）──
-    wf.add_edge("admet_predict", "mol_opt_agent")
-    wf.add_edge("mol_opt_agent", "admet_reeval")        # 优化后重新对接+ADMET
-    wf.add_edge("admet_reeval", "chem_reeval")          # 优化后重新化学筛选
-    wf.add_edge("chem_reeval", "eval_opt")              # 评估是否满足条件
-    wf.add_conditional_edges("eval_opt", route_opt, {
-        "mol_opt_agent": "mol_opt_agent",               # 不满足且次数<3：继续优化
-        "admet_final": "admet_final",                   # 满足或达到3次：进入临床前
-    })
-
+    wf.add_edge("planning_start",      "druggen_agent")
+    wf.add_edge("druggen_agent",       "admet_docking")
+    wf.add_edge("admet_docking",       "chemical_filter")
+    wf.add_edge("chemical_filter",     "admet_predict")
+    # ── 优化子图（子图内 interrupt_before=["mol_opt_agent"]）──
+    wf.add_edge("admet_predict",       "optimization_loop")
+    wf.add_edge("optimization_loop",   "admet_final")
     # ── 临床前 + 临床阶段 ──
-    wf.add_edge("admet_final", "trial_generator_agent")
+    wf.add_edge("admet_final",         "trial_generator_agent")
     wf.add_conditional_edges("trial_generator_agent", route_clinical, {
-        "patient_matching_agent": "patient_matching_agent",   # 并行分支1
-        "trial_prediction_agent": "trial_prediction_agent",   # 并行分支2（或唯一）
+        "patient_matching_agent": "patient_matching_agent",
+        "trial_prediction_agent": "trial_prediction_agent",
     })
-    wf.add_edge("patient_matching_agent", "planning_final")   # 并行汇入
-    wf.add_edge("trial_prediction_agent", "planning_final")   # 并行汇入
+    wf.add_edge("patient_matching_agent", "planning_final")
+    wf.add_edge("trial_prediction_agent", "planning_final")
     wf.add_edge("planning_final", END)
 
-    # MemorySaver 支持断点续跑；interrupt_before 在每次优化前暂停等用户确认
     checkpointer = MemorySaver()
-    return wf.compile(
-        checkpointer=checkpointer,
-        interrupt_before=["mol_opt_agent"],
-    )
+    return wf.compile(checkpointer=checkpointer)
 
 # ── 可视化流（支持中断恢复）────────────────────────────────────────────────────
 
 async def _stream_to_viz(graph, input_val, config: dict):
-    async for update in graph.astream(input_val, config=config, stream_mode="updates"):
+    # subgraphs=True 使子图内部各节点的更新也能实时推送到可视化面板
+    async for chunk in graph.astream(input_val, config=config, stream_mode="updates", subgraphs=True):
+        _ns, update = chunk
         for node_name, output in update.items():
             for msg in output.get("messages", []):
                 if isinstance(msg, AIMessage):
@@ -274,19 +309,28 @@ async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
 
     await _stream_to_viz(graph, initial, config)
 
-    # 处理中断：每次 mol_opt_agent 前暂停，等用户确认
+    # 处理子图内的中断：每次 mol_opt_agent 前暂停，等浏览器确认按钮
     while True:
         state = graph.get_state(config)
-        if not state.next:   # 流程自然结束
+        if not state.next:
             break
         opt_n = state.values.get("opt_count", 0)
-        print(f"\n[优化循环 {opt_n + 1}/3] 查看当前先导化合物结果，按回车继续优化...", flush=True)
-        input()
-        await _stream_to_viz(graph, None, config)   # None = 从断点继续
+        await broadcast(
+            "system", "WaitingConfirm",
+            f"[优化循环 {opt_n + 1}/3] 先导化合物已选出，请在可视化面板点击"确认"继续优化",
+        )
+        _confirm_event.clear()
+        await _confirm_event.wait()
+        await broadcast("system", "System", "继续优化中...")
+        await _stream_to_viz(graph, None, config)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
+    global _confirm_event, _main_loop
+    _confirm_event = asyncio.Event()
+    _main_loop = asyncio.get_event_loop()
+
     sys.stdout.reconfigure(encoding="utf-8")
 
     if os.environ.get("LANGCHAIN_API_KEY"):
@@ -313,7 +357,6 @@ async def main():
         def select(*names):
             return [tool_map[n] for n in names if n in tool_map]
 
-        # 为每个流程节点创建 agent（同一个 runnable 可复用为多个节点）
         planning_r   = create_react_agent(ds(thinking=True), [], prompt=PLANNING_START_SYS)
         planning_f_r = create_react_agent(ds(thinking=True), [], prompt=PLANNING_FINAL_SYS)
         druggen_r    = create_react_agent(ds(), select("run_druggen"), prompt=DRUGGEN_SYS)
@@ -341,25 +384,27 @@ async def main():
         )
 
         nodes = {
-            # 药物发现
-            "planning_start":          make_agent_node("planning_agent",              planning_r),
-            "druggen_agent":           make_agent_node("druggen_agent",               druggen_r),
-            "admet_docking":           make_agent_node("admet_properties_agent",      admet_r),
-            "chemical_filter":         make_agent_node("chemical_agent",              chem_r),
-            "admet_predict":           make_agent_node("admet_properties_agent",      admet_r),
-            # 优化循环（interrupt_before mol_opt_agent）
-            "mol_opt_agent":           make_agent_node("molecule_optimization_agent", mol_opt_r),
-            "admet_reeval":            make_agent_node("admet_properties_agent",      admet_r),
-            "chem_reeval":             make_agent_node("chemical_agent",              chem_r),
-            # 临床前 + 临床
-            "admet_final":             make_agent_node("admet_properties_agent",      admet_r),
-            "trial_generator_agent":   make_agent_node("trial_generator_agent",       trial_gen_r),
-            "patient_matching_agent":  make_agent_node("patient_matching_agent",      patient_r),
-            "trial_prediction_agent":  make_agent_node("trial_prediction_agent",      trial_pred_r),
-            "planning_final":          make_agent_node("planning_agent",              planning_f_r),
+            "planning_start":         make_agent_node("planning_agent",              planning_r),
+            "druggen_agent":          make_agent_node("druggen_agent",               druggen_r),
+            "admet_docking":          make_agent_node("admet_properties_agent",      admet_r),
+            "chemical_filter":        make_agent_node("chemical_agent",              chem_r),
+            "admet_predict":          make_agent_node("admet_properties_agent",      admet_r),
+            # 优化子图节点（在 build_opt_subgraph 内部注册）
+            "admet_final":            make_agent_node("admet_properties_agent",      admet_r),
+            "trial_generator_agent":  make_agent_node("trial_generator_agent",       trial_gen_r),
+            "patient_matching_agent": make_agent_node("patient_matching_agent",      patient_r),
+            "trial_prediction_agent": make_agent_node("trial_prediction_agent",      trial_pred_r),
+            "planning_final":         make_agent_node("planning_agent",              planning_f_r),
         }
 
-        graph = build_graph(nodes, ds())
+        opt_nodes = {
+            "mol_opt_agent": make_agent_node("molecule_optimization_agent", mol_opt_r),
+            "admet_reeval":  make_agent_node("admet_properties_agent",      admet_r),
+            "chem_reeval":   make_agent_node("chemical_agent",              chem_r),
+        }
+
+        opt_subgraph = build_opt_subgraph(opt_nodes, ds())
+        graph = build_graph(nodes, opt_subgraph)
 
         task = input("请输入你的任务：").strip() or "模拟DPP4(P27487)的药物开发"
         has_xml = ".xml" in task or "xml" in task.lower()
