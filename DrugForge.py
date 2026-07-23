@@ -19,6 +19,56 @@ from state import RunState
 
 PROJECT_DIR = Path(__file__).parent
 
+# ── Mem0 跨会话记忆（可选，设置 MEM0_API_KEY 后自动启用）────────────────────
+
+try:
+    from mem0 import MemoryClient as _Mem0Client
+    _MEM0_AVAILABLE = True
+except ImportError:
+    _MEM0_AVAILABLE = False
+
+_mem0: object | None = None
+MEM0_USER_ID = "drugforge-default"
+
+def _get_mem0():
+    global _mem0
+    if not _MEM0_AVAILABLE:
+        return None
+    key = os.environ.get("MEM0_API_KEY", "")
+    if not key:
+        return None
+    if _mem0 is None:
+        _mem0 = _Mem0Client(api_key=key)
+    return _mem0
+
+def mem0_recall(task: str) -> str:
+    """搜索与当前任务相关的历史偏好，返回可拼入 prompt 的字符串。"""
+    client = _get_mem0()
+    if not client:
+        return ""
+    try:
+        hits = client.search(f"用户对药物研发任务的偏好：{task}", user_id=MEM0_USER_ID, limit=3)
+        if not hits:
+            return ""
+        lines = [h["memory"] for h in hits if h.get("score", 0) > 0.3]
+        return "\n".join(lines) if lines else ""
+    except Exception:
+        return ""
+
+def mem0_save(task: str, opt_direction: str):
+    """在优化结束后记住用户本次任务和优化偏好。"""
+    client = _get_mem0()
+    if not client:
+        return
+    try:
+        msgs = [
+            {"role": "user",      "content": f"任务：{task}；本次优化方向：{opt_direction}"},
+            {"role": "assistant", "content": "好的，已记录本次药物研发任务的偏好。"},
+        ]
+        client.add(msgs, user_id=MEM0_USER_ID)
+    except Exception:
+        pass
+
 # ── 可视化服务器 ──────────────────────────────────────────────────────────────
 
 messages_store: list = []
@@ -300,8 +350,14 @@ async def _stream_to_viz(graph, input_val, config: dict):
                     await broadcast(node_name, "ToolResult", f"[工具结果] {content}")
 
 async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
+    # 从 Mem0 召回历史偏好，拼入首条消息给 planning_start 参考
+    past = mem0_recall(task)
+    task_msg = task if not past else f"{task}\n\n[用户历史偏好]\n{past}"
+    if past:
+        print(f"[Mem0] 召回 {len(past.splitlines())} 条历史偏好", flush=True)
+
     initial = {
-        "messages": [HumanMessage(content=task)],
+        "messages": [HumanMessage(content=task_msg)],
         "opt_count": 0,
         "opt_satisfied": False,
         "has_xml": has_xml,
@@ -321,6 +377,8 @@ async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
         )
         _confirm_event.clear()
         await _confirm_event.wait()
+        # 用户确认后记录本轮优化偏好（异步保存，不阻塞主流程）
+        mem0_save(task, f"第{opt_n + 1}轮优化，用户确认继续，任务：{task}")
         await broadcast("system", "System", "继续优化中...")
         await _stream_to_viz(graph, None, config)
 
@@ -337,6 +395,11 @@ async def main():
         os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
         os.environ.setdefault("LANGCHAIN_PROJECT", "DrugForge")
         print("[LangSmith] 追踪已启用", flush=True)
+
+    if os.environ.get("MEM0_API_KEY"):
+        print("[Mem0] 跨会话记忆已启用", flush=True)
+    else:
+        print("[Mem0] 未设置 MEM0_API_KEY，跳过记忆功能", flush=True)
 
     servers = {
         "druggen":     {"command": sys.executable, "args": ["druggen_mcp_server.py"],            "transport": "stdio", "cwd": str(PROJECT_DIR)},
