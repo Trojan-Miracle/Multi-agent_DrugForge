@@ -51,7 +51,10 @@ python DrugForge.py --port 8766 --exit-on-complete
 ## 运行记录
 
 - `runs/{run_id}.json`：消息、阶段结果、耗时和运行状态。
-- `runs/{run_id}.md`：通过格式检查的最终汇总报告。
+- `runs/{run_id}.md`：从结构化工具数据生成的可追溯报告。
+- `runs/{run_id}.draft.md`：LLM 文字草稿，不作为数值来源。
+- `runs/{run_id}.evidence.json` / `.evidence.html`：机器可读证据与浏览器查看页。
+- `runs/{run_id}.sqlite`：跨进程恢复所需的检查点。
 - `runs/`、密钥配置和模型权重默认不纳入 Git。
 
 ```bash
@@ -59,7 +62,13 @@ python state.py
 python state.py --show YOUR_RUN_ID
 ```
 
-JSON 日志用于回放；当前图检查点保存在内存中，进程重启后不能直接续跑。
+JSON 日志用于回放，SQLite 保存图状态。恢复命令：
+
+```bash
+python DrugForge.py --resume YOUR_RUN_ID
+```
+
+恢复时沿用原任务、靶点和患者文件，检查核心 LLM 配置与患者文件哈希；不要同时指定 `--task`、`--target` 或 `--patients`。旧版纯 JSON 日志不能升级为可恢复检查点。更多说明见[工程指南](ENGINEERING.md)。
 
 ## 可选追踪与记忆
 

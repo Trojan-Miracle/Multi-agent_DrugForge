@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from workflow_runtime import make_agent_node, contains_error
+from contracts import molecule
 
 class Agent:
     def __init__(self, messages):
@@ -12,33 +13,38 @@ class Agent:
     async def ainvoke(self, inputs, config):
         self.inputs = inputs
         self.config = config
-        return {'messages': [*inputs['messages'], *self.messages]}
+        calls = [AIMessage(content='', tool_calls=[{'name': m.name, 'args': {'uniprot_id': 'P27487', 'smiles_list': ['CCO']}, 'id': m.tool_call_id}]) for m in self.messages if isinstance(m, ToolMessage)]
+        return {'messages': [*inputs['messages'], *calls, *self.messages]}
 
 def tool(content, name='run_docking', status='success'):
     return ToolMessage(content=content, name=name, tool_call_id='call-1', status=status)
 
+def docking_state():
+    return {'messages': [], 'stage_results': {'druggen_agent': {'data': {
+        'molecules': [molecule('CCO', 'test-source', '/smiles/0').model_dump()], 'target_id': 'P27487'}}}}
+
 def test_stage_requires_real_tool_evidence():
     agent = Agent([AIMessage(content='I performed docking')])
     with pytest.raises(RuntimeError, match='no successful'):
-        asyncio.run(make_agent_node('admet_docking', agent)({'messages': []}))
+        asyncio.run(make_agent_node('admet_docking', agent)(docking_state()))
 
 @pytest.mark.parametrize('payload', ['{"error":"offline"}', '{"ok":false}', '{"results":[{"error":"bad molecule"}]}'])
 def test_stage_rejects_embedded_tool_errors(payload):
     agent = Agent([tool(payload), AIMessage(content='looks good')])
     with pytest.raises(RuntimeError, match='no successful'):
-        asyncio.run(make_agent_node('admet_docking', agent)({'messages': []}))
+        asyncio.run(make_agent_node('admet_docking', agent)(docking_state()))
 
 def test_stage_records_evidence_and_specific_instruction():
-    agent = Agent([tool('{"score":-7}'), AIMessage(content='tool estimate')])
-    result = asyncio.run(make_agent_node('admet_docking', agent)({'messages': []}))
+    agent = Agent([tool('{"smiles":["CCO"],"scores":[-7]}'), AIMessage(content='tool estimate')])
+    result = asyncio.run(make_agent_node('admet_docking', agent)(docking_state()))
     assert '仅对当前候选分子' in agent.inputs['messages'][-1].content
     assert agent.config['recursion_limit'] == 24
     assert result['stage_results']['admet_docking']['tool_results'][0]['call_id'] == 'call-1'
-    assert len(result['messages']) == 2
+    assert len(result['messages']) == 3
 
 def test_optional_prediction_cannot_turn_error_into_probability():
     agent = Agent([tool('{"error":"missing checkpoint"}', 'predict_trial_success'), AIMessage(content='95% success')])
-    result = asyncio.run(make_agent_node('trial_prediction_agent', agent)({'messages': []}))
+    result = asyncio.run(make_agent_node('trial_prediction_agent', agent)(docking_state()))
     assert result['stage_results']['trial_prediction_agent']['status'] == 'unavailable'
     assert '95%' not in result['messages'][-1].content
     assert '不可用' in result['messages'][-1].content
@@ -48,7 +54,7 @@ def test_stage_timeout():
         async def ainvoke(self, inputs, config):
             await asyncio.sleep(10)
     with pytest.raises(RuntimeError, match='stage timeout'):
-        asyncio.run(make_agent_node('planning_start', Slow(), timeout=0.01)({'messages': []}))
+        asyncio.run(make_agent_node('planning_start', Slow(), timeout=0.01)(docking_state()))
 
 def test_missing_trial_checkpoint_does_not_load_models(monkeypatch):
     import trialpred_mcp_server as trial

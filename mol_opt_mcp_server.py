@@ -37,11 +37,15 @@ async def molecule_optimizer(smiles: str, properties: str, action: str):
         return json.dumps({"error": "smiles and properties must be non-empty"})
     prompt = (
         f"I have a molecule with the SMILES notation {smiles}. "
-        f"Suggest modifications to {action} its {properties} value while maintaining its core structure."
+        f"Suggest modifications to {action} its {properties} value while maintaining its core structure. "
+        'Return only a JSON object with the key "optimized_smiles" containing one SMILES string.'
     )
     try:
         message = await asyncio.to_thread(_optimize, prompt)
-        return json.dumps({"message": message})
+        result = json.loads(message["content"])
+        from contracts import molecule
+        molecule(result["optimized_smiles"], "validation", "/optimized_smiles")
+        return json.dumps({"optimized_smiles": result["optimized_smiles"], "original_smiles": smiles})
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 

@@ -2,6 +2,11 @@
 import asyncio
 import json
 import time
+import uuid
+import hashlib
+from contextvars import ContextVar
+from langchain_core.tools import StructuredTool
+from contracts import handoff, decode_payload, validate_arguments, normalize, merge_data
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 STAGE_TASKS = {
@@ -53,50 +58,115 @@ def contains_error(value):
     if isinstance(value, list):
         return any(contains_error(item) for item in value)
     if isinstance(value, dict):
-        if value.get('error') or value.get('ok') is False or value.get('isError') is True:
+        if value.get('error') or value.get('errors') or value.get('ok') is False or value.get('isError') is True:
             return True
         return any(contains_error(item) for item in value.values())
     return False
 
-def make_agent_node(stage, agent, *, timeout=600, max_steps=24):
+ACTIVE_HANDOFF = ContextVar('drugforge_handoff', default=None)
+
+
+def guard_tool(tool):
+    """Validate structured stage inputs before a domain tool executes."""
+    async def guarded(**kwargs):
+        context = ACTIVE_HANDOFF.get()
+        if context is None:
+            raise ValueError('Tool invoked outside a configured stage')
+        validate_arguments(tool.name, kwargs, context)
+        return await tool.ainvoke(kwargs)
+    return StructuredTool.from_function(name=tool.name, description=tool.description,
+                                        args_schema=tool.args_schema, coroutine=guarded)
+
+
+class StageExecutionError(RuntimeError):
+    def __init__(self, record):
+        self.record = record
+        super().__init__(f"{record['stage']}: {record.get('error', 'stage failed')}")
+
+
+def usage_from_messages(messages):
+    calls = []
+    for message in messages:
+        if not isinstance(message, AIMessage):
+            continue
+        usage = message.usage_metadata
+        metadata = message.response_metadata or {}
+        calls.append({'model': metadata.get('model_name') or metadata.get('model'),
+                      'input_tokens': usage.get('input_tokens') if usage else None,
+                      'output_tokens': usage.get('output_tokens') if usage else None})
+    return calls
+
+
+def make_agent_node(stage, agent, *, timeout=600, max_steps=24, record_sink=None):
     async def node(state):
         started = time.monotonic()
-        inputs = [*state['messages'], HumanMessage(content=STAGE_TASKS[stage])]
+        attempt_id = uuid.uuid4().hex
+        context = handoff(stage, state)
+        # Agents receive a typed handoff, not the accumulated multi-agent transcript.
+        inputs = [HumanMessage(content=json.dumps(context, ensure_ascii=False)),
+                  HumanMessage(content=STAGE_TASKS[stage])]
+        record = {'id': attempt_id, 'stage': stage, 'round': context['round'],
+                  'status': 'failed', 'started_at': time.time(), 'summary': '', 'tool_results': [], 'llm_calls': [],
+                  'data': merge_data([]), 'input': context}
+        token = ACTIVE_HANDOFF.set(context)
+        messages = []
         try:
             result = await asyncio.wait_for(
-                agent.ainvoke({'messages': inputs}, config={'recursion_limit': max_steps}),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError as exc:
-            raise RuntimeError(f'{stage}: exceeded {timeout}s stage timeout') from exc
-        messages = result['messages'][len(inputs):]
-        evidence = []
-        for msg in messages:
-            if isinstance(msg, ToolMessage):
-                evidence.append({'tool': msg.name, 'call_id': msg.tool_call_id,
-                                 'ok': msg.status != 'error' and bool(content_text(msg.content).strip())
-                                       and not contains_error(msg.content),
-                                 'content': msg.content})
-        required = REQUIRED_TOOLS.get(stage, set())
-        successful = {item['tool'] for item in evidence if item['ok']}
-        # Trial prediction is optional: an explicit tool failure must be disclosed, not fabricated.
-        optional = stage == 'trial_prediction_agent'
-        if required and not required.intersection(successful):
-            if not optional or not required.intersection(item['tool'] for item in evidence):
-                if evidence:
-                    detail = content_text(evidence[-1]['content'])[:500]
-                else:
-                    detail = 'agent returned no tool evidence'
-                raise RuntimeError(f'{stage}: no successful required tool result; {detail}')
-            messages = [m for m in messages if not isinstance(m, AIMessage) or m.tool_calls]
-            messages.append(AIMessage(content='试验成功概率：不可用。预测工具执行失败，未产生有效概率；详见工具错误记录。', name=stage))
-        summary = next((content_text(m.content) for m in reversed(messages)
-                        if isinstance(m, AIMessage) and not m.tool_calls), '')
-        if not summary.strip():
-            raise RuntimeError(f'{stage}: empty stage summary')
-        record = {'status': 'unavailable' if optional and not required.intersection(successful) else 'completed',
-                  'duration_seconds': round(time.monotonic() - started, 3),
-                  'summary': summary, 'tool_results': evidence}
-        return {'messages': messages, 'stage_results': {stage: record}}
+                agent.ainvoke({'messages': inputs}, config={'recursion_limit': max_steps}), timeout=timeout)
+            messages = result['messages'][len(inputs):]
+            record['llm_calls'] = usage_from_messages(messages)
+            calls = {call['id']: call for message in messages if isinstance(message, AIMessage)
+                     for call in message.tool_calls}
+            parts = []
+            for msg in messages:
+                if not isinstance(msg, ToolMessage):
+                    continue
+                call = calls.get(msg.tool_call_id)
+                entry = {'id': 'E-' + attempt_id + '-' + str(len(record['tool_results'])),
+                         'tool': msg.name, 'call_id': msg.tool_call_id, 'args': call['args'] if call else None,
+                         'ok': False, 'arguments_valid': False, 'content': msg.content, 'payload': None}
+                entry['input_sha256'] = hashlib.sha256(json.dumps(entry['args'], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+                entry['sha256'] = hashlib.sha256(json.dumps(msg.content, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+                record['tool_results'].append(entry)
+                try:
+                    if not call or call['name'] != msg.name:
+                        raise ValueError('Tool result lacks a matching call and input arguments')
+                    validate_arguments(msg.name, call['args'], context)
+                    entry['arguments_valid'] = True
+                    if msg.status == 'error' or contains_error(msg.content):
+                        raise ValueError(content_text(msg.content))
+                    entry['payload'] = decode_payload(msg.content)
+                    if msg.name in REQUIRED_TOOLS.get(stage, set()):
+                        parts.append(normalize(msg.name, entry['payload'], call['args'], entry['id'], context))
+                    entry['ok'] = True
+                except (ValueError, KeyError, TypeError, IndexError) as exc:
+                    entry['error'] = str(exc)
+            required = REQUIRED_TOOLS.get(stage, set())
+            successful = {e['tool'] for e in record['tool_results'] if e['ok']}
+            optional = stage == 'trial_prediction_agent'
+            if required and not required.intersection(successful):
+                if not optional or not required.intersection(e['tool'] for e in record['tool_results']):
+                    errors = [e.get('error', '') for e in record['tool_results']]
+                    raise ValueError('no successful required tool result; ' + ('; '.join(errors) or 'no tool evidence'))
+                messages = [m for m in messages if not isinstance(m, AIMessage) or m.tool_calls]
+                messages.append(AIMessage(content='试验成功概率：不可用。预测工具未产生有效概率，详见证据记录。', name=stage))
+            record['summary'] = next((content_text(m.content) for m in reversed(messages)
+                                      if isinstance(m, AIMessage) and not m.tool_calls), '')
+            if not record['summary'].strip():
+                raise ValueError('empty stage summary')
+            record['data'] = merge_data(parts, context.get('target_id'))
+            record['status'] = 'unavailable' if optional and not required.intersection(successful) else 'completed'
+        except asyncio.CancelledError:
+            record['error'] = 'Stage interrupted; partial provider usage may be unavailable'
+            raise
+        except Exception as exc:
+            record['error'] = f'exceeded {timeout}s stage timeout' if isinstance(exc, asyncio.TimeoutError) else str(exc)
+            raise StageExecutionError(record) from exc
+        finally:
+            ACTIVE_HANDOFF.reset(token)
+            record['duration_seconds'] = round(time.monotonic() - started, 6)
+            if record_sink:
+                record_sink(record)
+        return {'messages': messages, 'stage_results': {stage: record}, 'attempts': {attempt_id: record}}
     node.__name__ = stage
     return node

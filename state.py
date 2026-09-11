@@ -8,19 +8,21 @@ import os
 import re
 import tempfile
 import uuid
+import time
 from datetime import datetime
 from pathlib import Path
 
-RUNS_DIR = Path(__file__).parent / "runs"
+RUNS_DIR = Path(os.environ.get("DRUGFORGE_RUNS_DIR", str(Path(__file__).parent / "runs")))
 
 
 class RunState:
-    def __init__(self, task: str, run_id: str | None = None):
+    def __init__(self, task: str, run_id: str | None = None, configuration: dict | None = None):
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
         self.path = self._path(self.run_id)
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
         if self.path.exists():
             raise FileExistsError(f"Run already exists: {self.run_id}")
+        self._segment_started = time.monotonic()
         self._data = {
             "run_id":      self.run_id,
             "task":        task,
@@ -29,7 +31,60 @@ class RunState:
             "status":      "running",
             "messages":    [],
             "stage_results": {},
+            "attempts": {},
+            "configuration": configuration or {},
+            "active_seconds": 0.0,
+            "resume_count": 0,
         }
+        self._flush()
+
+    @property
+    def data(self):
+        return self._data
+
+    @classmethod
+    def reopen(cls, run_id):
+        obj = cls.__new__(cls)
+        obj.run_id = run_id
+        obj.path = cls._path(run_id)
+        obj._data = cls.load(run_id)
+        obj._segment_started = None
+        return obj
+
+    def resume(self):
+        if self.status == 'done':
+            raise ValueError('Run is already complete')
+        if self.status == 'running':
+            self._data['interrupted_without_shutdown'] = True
+        self._data['status'] = 'running'
+        self._data['finished_at'] = None
+        self._data.pop('error', None)
+        self._data['resume_count'] = self._data.get('resume_count', 0) + 1
+        self._segment_started = time.monotonic()
+        self._flush()
+
+    def record_attempt(self, record):
+        self._data.setdefault('attempts', {})[record['id']] = record
+        if record['status'] in {'completed', 'unavailable'}:
+            self._data['stage_results'][record['stage']] = record
+        self._flush()
+
+    def reconcile(self, attempts):
+        # Successful checkpoint writes are authoritative after a crash between two stores.
+        self._data.setdefault('attempts', {}).update(attempts)
+        for record in attempts.values():
+            if record['status'] in {'completed', 'unavailable'}:
+                self._data['stage_results'][record['stage']] = record
+        self._flush()
+
+    def _stop_clock(self):
+        if self._segment_started is not None:
+            self._data['active_seconds'] = self._data.get('active_seconds', 0) + time.monotonic() - self._segment_started
+            self._segment_started = None
+
+    def pause(self):
+        self._stop_clock()
+        self._data['status'] = 'paused'
         self._flush()
 
     def append(self, agent: str, msg_type: str, content: str):
@@ -50,11 +105,13 @@ class RunState:
         return self._data["status"]
 
     def done(self):
+        self._stop_clock()
         self._data["status"] = "done"
         self._data["finished_at"] = datetime.now().isoformat()
         self._flush()
 
     def failed(self, reason: str = ""):
+        self._stop_clock()
         self._data["status"] = "failed"
         self._data["finished_at"] = datetime.now().isoformat()
         if reason:
@@ -72,6 +129,10 @@ class RunState:
         return RUNS_DIR / f"{run_id}.json"
 
     def _flush(self):
+        if self._segment_started is not None:
+            now = time.monotonic()
+            self._data['active_seconds'] = self._data.get('active_seconds', 0) + now - self._segment_started
+            self._segment_started = now
         # Replace atomically so interrupted writes do not destroy the previous log.
         temporary = None
         try:

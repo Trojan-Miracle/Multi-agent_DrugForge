@@ -1,0 +1,5 @@
+{
+  "currency": "YOUR_CURRENCY",
+  "models": {},
+  "note": "Add exact provider model names mapped to input_per_million and output_per_million. No default prices are assumed. Excludes GPU and tool charges."
+}

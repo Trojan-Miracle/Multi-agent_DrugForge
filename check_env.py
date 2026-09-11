@@ -76,7 +76,7 @@ def check_gpu():
 
 def check_core_pkgs(demo=False):
     res=[]
-    names = ["langgraph", "langchain_openai", "langchain_mcp_adapters", "mcp"] if demo else CORE_PKGS
+    names = ["langgraph", "langchain_openai", "langchain_mcp_adapters", "mcp", "langgraph.checkpoint.sqlite.aio"] if demo else CORE_PKGS
     for name in names:
         try:
             mod = __import__(name)

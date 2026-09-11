@@ -2,6 +2,9 @@ import argparse
 import asyncio
 from contextlib import AsyncExitStack
 import secrets
+import hashlib
+import time
+import uuid
 import json
 import os
 import sys
@@ -20,7 +23,11 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 
 from state import RunState
-from workflow_runtime import make_agent_node, merge_stage_results, content_text
+from workflow_runtime import make_agent_node, merge_stage_results, content_text, guard_tool, usage_from_messages
+from contracts import handoff
+from persistence import AsyncSqliteSaver, run_lease, checkpoint_path, validate_resume, collect_attempts, waiting_for_approval, GRAPH_VERSION
+from metrics import score_run
+from reporting import write_report
 
 PROJECT_DIR = Path(__file__).parent
 
@@ -176,8 +183,8 @@ def _unwrap_json_blocks(s: str) -> str:
         results.append(line)
     return "\n".join(results)
 
-def _validate_output():
-    report = next((m["content"] for m in reversed(messages_store)
+def _validate_output(report=None):
+    report = report if report is not None else next((m["content"] for m in reversed(messages_store)
                    if m["agent"] == "planning_final" and m["type"] == "AIMessage"), "")
     sections = ("药物发现性质", "临床试验报告", "患者匹配", "试验成功概率", "总结")
     if not report.strip().endswith("\nFINAL") or not all(x in report for x in sections):
@@ -193,10 +200,18 @@ class DrugForgeState(TypedDict):
     opt_satisfied: bool  # 当前优化是否满足条件
     has_xml: bool        # 是否提供患者 XML 路径
     stage_results: Annotated[dict, merge_stage_results]
+    attempts: Annotated[dict, merge_stage_results]
+    task: str
+    target_id: str | None
+    patients_path: str | None
 
 # OptState 与 DrugForgeState 共享字段，供优化子图使用
 class OptState(TypedDict):
     stage_results: Annotated[dict, merge_stage_results]
+    attempts: Annotated[dict, merge_stage_results]
+    task: str
+    target_id: str | None
+    patients_path: str | None
     messages: Annotated[list, add_messages]
     opt_count: int
     opt_satisfied: bool
@@ -278,27 +293,34 @@ TRIAL_PRED_SYS = """你是试验预测专家。根据结构化试验文本预测
 
 # ── 优化子图 ──────────────────────────────────────────────────────────────────
 
-def build_opt_subgraph(opt_nodes: dict, eval_llm: ChatOpenAI):
+def build_opt_subgraph(opt_nodes: dict, eval_llm: ChatOpenAI, record_sink=None):
     """把 mol_opt → admet_reeval → chem_reeval → eval_opt 循环提取为独立子图。
 
-    子图不带 checkpointer（由父图的 MemorySaver 统一管理），
+    子图不带 checkpointer（由父图的检查点后端统一管理），
     interrupt_before=["mol_opt_agent"] 会通过父图的 checkpointer 向上传播，
     使父图在每次进入优化前暂停，等待浏览器确认按钮触发继续。
     """
 
     async def eval_opt(state: OptState) -> dict:
-        resp = await asyncio.wait_for(eval_llm.ainvoke([
-            SystemMessage(content="""根据最近的 ADMET 和化学性质评估结果，
-判断当前优化的先导化合物是否同时满足：通过 Lipinski/Veber 规则、口服生物利用度>0.5、低毒性风险。
-仅当端点定义与单位明确、结果充分支持条件时回答 satisfied；缺失、错误或含糊结果回答 continue。
-只回答 satisfied 或 continue，不要加任何其他内容。"""),
-            *state["messages"][-12:],
-        ]), timeout=120)
-        satisfied = isinstance(resp.content, str) and resp.content.strip().lower() == "satisfied"
-        return {
-            "opt_satisfied": satisfied,
-            "opt_count": state.get("opt_count", 0) + 1,
-        }
+        started = time.monotonic()
+        record = {'id': uuid.uuid4().hex, 'stage': 'eval_opt', 'round': state.get('opt_count', 0) + 1,
+                  'status': 'failed', 'data': {}, 'tool_results': [], 'llm_calls': []}
+        try:
+            resp = await asyncio.wait_for(eval_llm.ainvoke([
+                SystemMessage(content="""根据结构化 ADMET 与理化筛选结果，判断是否同时通过 Lipinski/Veber、口服生物利用度>0.5、低毒性风险。
+端点含义或单位未知、证据不足时回答 continue。只有明确达标才回答 satisfied。只输出一个词。"""),
+                HumanMessage(content=json.dumps(handoff('admet_final', state), ensure_ascii=False)),
+            ]), timeout=120)
+            satisfied = isinstance(resp.content, str) and resp.content.strip().lower() == 'satisfied'
+            record.update(status='completed', summary=str(resp.content), llm_calls=usage_from_messages([resp]))
+        except BaseException as exc:
+            record['error'] = str(exc) or type(exc).__name__
+            raise
+        finally:
+            record['duration_seconds'] = time.monotonic() - started
+            if record_sink: record_sink(record)
+        return {'opt_satisfied': satisfied, 'opt_count': state.get('opt_count', 0) + 1,
+                'attempts': {record['id']: record}}
 
     def route_opt(state: OptState) -> str:
         if state["opt_satisfied"] or state.get("opt_count", 0) >= 3:
@@ -325,7 +347,7 @@ def build_opt_subgraph(opt_nodes: dict, eval_llm: ChatOpenAI):
 
 # ── 图构建 ────────────────────────────────────────────────────────────────────
 
-def build_graph(nodes: dict, opt_subgraph):
+def build_graph(nodes: dict, opt_subgraph, checkpointer=None):
 
     def route_clinical(state: DrugForgeState) -> list[str]:
         if state.get("has_xml"):
@@ -357,7 +379,7 @@ def build_graph(nodes: dict, opt_subgraph):
     wf.add_edge("trial_prediction_agent", "planning_final")
     wf.add_edge("planning_final", END)
 
-    checkpointer = MemorySaver()
+    checkpointer = checkpointer if checkpointer is not None else MemorySaver()
     return wf.compile(checkpointer=checkpointer)
 
 # ── 可视化流（支持中断恢复）────────────────────────────────────────────────────
@@ -386,10 +408,10 @@ async def _stream_to_viz(graph, input_val, config: dict):
                     content = _unwrap_json_blocks(content_text(msg.content))
                     await broadcast(node_name, "ToolResult", f"[工具结果] {content}")
 
-async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
+async def run_with_viz(graph, task: str, has_xml: bool, config: dict, *, resume=False, target_id=None, patients_path=None):
     global _pending_approval
     # 从 Mem0 召回历史偏好，拼入首条消息给 planning_start 参考
-    past = await asyncio.to_thread(mem0_recall, task)
+    past = "" if resume else await asyncio.to_thread(mem0_recall, task)
     task_msg = task if not past else f"{task}\n\n[用户历史偏好]\n{past}"
     if past:
         print(f"[Mem0] 召回 {len(past.splitlines())} 条历史偏好", flush=True)
@@ -400,13 +422,26 @@ async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
         "opt_satisfied": False,
         "has_xml": has_xml,
         "stage_results": {},
+        "attempts": {},
+        "task": task_msg,
+        "target_id": target_id,
+        "patients_path": patients_path,
     }
 
-    await _stream_to_viz(graph, initial, config)
+    if not resume:
+        await _stream_to_viz(graph, initial, config)
+    else:
+        snapshot = await graph.aget_state(config, subgraphs=True)
+        if not snapshot.values:
+            raise ValueError("No checkpoint state exists for this run")
+        if _run: _run.reconcile(collect_attempts(snapshot))
+        if snapshot.next and not waiting_for_approval(snapshot):
+            await _stream_to_viz(graph, None, config)
 
     # 处理子图内的中断：每次 mol_opt_agent 前暂停，等浏览器确认按钮
     while True:
-        state = graph.get_state(config, subgraphs=True)
+        state = await graph.aget_state(config, subgraphs=True)
+        if _run: _run.reconcile(collect_attempts(state))
         if not state.next:
             break
         opt_n = state.values.get("opt_count", 0)
@@ -422,6 +457,9 @@ async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
             f"[优化循环 {opt_n + 1}/3] 先导化合物已选出，请在可视化面板点击“确认”继续优化",
         )
         await _confirm_event.wait()
+        if _run:
+            _run.data.setdefault("approvals", []).append({"round": opt_n + 1, "decision": "approved", "time": time.time()})
+            _run._flush()
         # 用户确认后记录本轮优化偏好（异步保存，不阻塞主流程）
         await asyncio.to_thread(mem0_save, task, f"第{opt_n + 1}轮优化，用户确认继续")
         await broadcast("system", "System", "继续优化中...")
@@ -429,7 +467,7 @@ async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def build_live_graph(all_tools):
+def build_live_graph(all_tools, checkpointer=None, record_sink=None):
     tool_map = {t.name: t for t in all_tools}
     if len(tool_map) != len(all_tools):
         raise RuntimeError("Duplicate MCP tool names")
@@ -438,7 +476,7 @@ def build_live_graph(all_tools):
         missing = sorted(set(names) - tool_map.keys())
         if missing:
             raise RuntimeError(f"Missing required MCP tools: {missing}")
-        return [tool_map[n] for n in names]
+        return [guard_tool(tool_map[n]) for n in names]
 
     def agent(prompt, names=(), thinking=False):
         return create_react_agent(ds(thinking=thinking), select(*names), prompt=prompt)
@@ -464,22 +502,27 @@ def build_live_graph(all_tools):
               "chemical_filter": chemical, "admet_predict": admet, "admet_final": admet,
               "trial_generator_agent": trial, "trial_prediction_agent": prediction,
               "planning_final": final}
-    nodes = {name: make_agent_node(name, worker) for name, worker in agents.items()}
-    nodes["patient_matching_agent"] = make_agent_node("patient_matching_agent", patient) if patient else no_patient
-    opt_nodes = {name: make_agent_node(name, worker) for name, worker in
+    nodes = {name: make_agent_node(name, worker, record_sink=record_sink) for name, worker in agents.items()}
+    nodes["patient_matching_agent"] = make_agent_node("patient_matching_agent", patient, record_sink=record_sink) if patient else no_patient
+    opt_nodes = {name: make_agent_node(name, worker, record_sink=record_sink) for name, worker in
                  {"mol_opt_agent": optimizer, "admet_reeval": admet, "chem_reeval": chemical}.items()}
-    return build_graph(nodes, build_opt_subgraph(opt_nodes, ds()))
+    return build_graph(nodes, build_opt_subgraph(opt_nodes, ds(), record_sink=record_sink), checkpointer=checkpointer)
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="DrugForge live workflow; use demo.py for offline mode")
     parser.add_argument("--task", help="Task description; otherwise prompt interactively")
     parser.add_argument("--patients", type=Path, help="Explicit patient XML file (optional)")
+    parser.add_argument("--resume", help="Resume a saved live run ID")
+    parser.add_argument("--target", help="Explicit UniProt target ID")
+    parser.add_argument("--prices", type=Path, help="Optional user-supplied LLM price JSON")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--exit-on-complete", action="store_true", help="Close the viewer after the run")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    if args.resume and (args.task is not None or args.patients or args.target):
+        parser.error("--resume restores the original task, target and patients; do not override them")
     if args.patients:
         args.patients = args.patients.expanduser().resolve()
         if not args.patients.is_file() or args.patients.suffix.lower() != ".xml":
@@ -487,11 +530,57 @@ def parse_args(argv=None):
     return args
 
 
+def model_configuration():
+    return {'model': os.environ.get('DEEPSEEK_MODEL', 'deepseek-v4-flash'),
+            'base_url': os.environ.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1')}
+
+
 async def main(args):
-    global _confirm_event, _main_loop, _run, _pending_approval
-    if not os.environ.get("DEEPSEEK_API_KEY"):
-        print("缺少 DEEPSEEK_API_KEY。无需密钥的演示请运行 python demo.py。", file=sys.stderr)
+    if not os.environ.get('DEEPSEEK_API_KEY'):
+        print('缺少 DEEPSEEK_API_KEY。无需密钥的演示请运行 python demo.py。', file=sys.stderr)
         return 1
+    try:
+        prices = json.loads(args.prices.read_text(encoding='utf-8')) if args.prices else None
+        if prices is not None:
+            score_run({'attempts': {}}, prices)
+        if args.resume:
+            run = RunState.reopen(args.resume)
+            validate_resume(run, 'live')
+        else:
+            task = (args.task if args.task is not None else input('请输入你的任务：')).strip() or '模拟DPP4(P27487)的药物开发'
+            configuration = {'mode': 'live', 'graph_version': GRAPH_VERSION, 'model': model_configuration(),
+                             'patients_path': str(args.patients) if args.patients else None,
+                             'patients_sha256': hashlib.sha256(args.patients.read_bytes()).hexdigest() if args.patients else None,
+                             'target_id': args.target}
+            run = RunState(task, configuration=configuration)
+        with run_lease(checkpoint_path(run)):
+            if args.resume:
+                run = RunState.reopen(args.resume)
+                validate_resume(run, 'live')
+                configuration = run.data['configuration']
+                if configuration['model'] != model_configuration():
+                    raise ValueError('Restore the original model configuration before resuming')
+                if configuration['patients_path']:
+                    patient = Path(configuration['patients_path'])
+                    if hashlib.sha256(patient.read_bytes()).hexdigest() != configuration['patients_sha256']:
+                        raise ValueError('Patient file changed since this run started')
+            async with AsyncSqliteSaver.from_conn_string(str(checkpoint_path(run))) as saver:
+                config = {'configurable': {'thread_id': run.run_id}}
+                if args.resume:
+                    if not await saver.aget_tuple(config):
+                        raise ValueError('Checkpoint is empty; cannot resume')
+                    run.resume()
+                if prices is not None:
+                    run.data['price_schedule'] = prices
+                    run._flush()
+                return await execute_live(args, run, saver)
+    except Exception as exc:
+        print(f'无法启动或恢复：{exc}', file=sys.stderr)
+        return 1
+
+
+async def execute_live(args, run, saver):
+    global _confirm_event, _main_loop, _run, _pending_approval
     _confirm_event = asyncio.Event()
     _main_loop = asyncio.get_running_loop()
     if hasattr(sys.stdout, "reconfigure"):
@@ -499,12 +588,11 @@ async def main(args):
     if os.environ.get("LANGCHAIN_API_KEY"):
         os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
         os.environ.setdefault("LANGCHAIN_PROJECT", "DrugForge")
-    task = (args.task if args.task is not None else input("请输入你的任务：")).strip()
-    task = task or "模拟DPP4(P27487)的药物开发"
-    if args.patients:
-        task += f"\n患者 XML 文件：{args.patients}"
-    _run = RunState(task=task)
-    messages_store.clear()
+    task = run.data['task']
+    configuration = run.data['configuration']
+    patients_path = configuration['patients_path']
+    _run = run
+    messages_store[:] = run.messages
     server = None
     try:
         server = HTTPServer(("127.0.0.1", args.port), VizHandler)
@@ -523,7 +611,7 @@ async def main(args):
             "trialpred":   {"command": sys.executable, "args": ["trialpred_mcp_server.py"],          "transport": "stdio", "cwd": str(PROJECT_DIR)},
         }
 
-        if not args.patients:
+        if not patients_path:
             servers.pop("patient")
         # Explicit sessions keep model processes alive across calls and close them after the run.
         client = MultiServerMCPClient(servers)
@@ -533,12 +621,20 @@ async def main(args):
                 await broadcast("system", "System", f"连接工具服务：{name}")
                 session = await stack.enter_async_context(client.session(name))
                 all_tools.extend(await load_mcp_tools(session))
-            graph = build_live_graph(all_tools)
+            graph = build_live_graph(all_tools, checkpointer=saver, record_sink=run.record_attempt)
             config = {"configurable": {"thread_id": _run.run_id}, "recursion_limit": 30}
-            await run_with_viz(graph, task, bool(args.patients), config)
-            report = _validate_output()
-            _run.path.with_suffix(".md").write_text(report, encoding="utf-8")
+            await run_with_viz(graph, task, bool(patients_path), config, resume=bool(args.resume),
+                               target_id=configuration['target_id'], patients_path=patients_path)
+            snapshot = await graph.aget_state(config)
+            run.reconcile(snapshot.values.get('attempts', {}))
+            run.record_stages(snapshot.values.get('stage_results', {}))
+            run.data['committed_attempts'] = snapshot.values.get('attempts', {})
+            draft = _validate_output(run.data['stage_results']['planning_final']['summary'])
+            run.path.with_suffix('.draft.md').write_text(draft, encoding='utf-8')
         _run.done()
+        run.data['metrics'] = score_run(run.data)
+        write_report(run.data, run.path.with_suffix('.md'))
+        run._flush()
         await broadcast("system", "System", "流程已完成，报告和运行记录已保存。")
         if not args.exit_on_complete:
             print("面板保持可用，按 Ctrl+C 退出。", flush=True)
@@ -546,10 +642,12 @@ async def main(args):
         return 0
     except asyncio.CancelledError:
         if _run.status == "running":
-            _run.failed("用户中止运行")
+            _run.pause()
         raise
     except Exception as exc:
         _run.failed(str(exc))
+        run.data['metrics'] = score_run(run.data)
+        run._flush()
         await broadcast("system", "Error", f"运行失败：{exc}")
         print(f"运行失败：{exc}\n详情：{_run.path}", file=sys.stderr, flush=True)
         return 1

@@ -1,0 +1,13 @@
+{
+  "mode": "offline_fixture_benchmark",
+  "description": "Fixed fixtures test task outcomes and failure handling, not scientific model quality.",
+  "cases": [
+    {"id": "complete_workflow", "scenario": "success", "patients": false, "expected_status": "done", "reference": {"candidate_smiles": ["CCCCCO"], "required_tools": ["run_druggen", "run_docking", "select_leads_from_smiles", "chemfm_predict_many", "molecule_optimizer", "panacea_extract_components", "predict_trial_success"]}},
+    {"id": "patient_branch", "scenario": "success", "patients": true, "expected_status": "done", "reference": {"patient_ids": ["demo-patient-1"], "candidate_smiles": ["CCCCCO"], "required_tools": ["match_patient_trial"]}},
+    {"id": "unavailable_prediction", "scenario": "prediction_unavailable", "patients": false, "expected_status": "done", "prediction_unavailable": true},
+    {"id": "wrong_molecule_is_rejected", "scenario": "wrong_molecule", "patients": false, "expected_status": "failed", "error_contains": "handoff"},
+    {"id": "tool_outage_is_rejected", "scenario": "tool_error", "patients": false, "expected_status": "failed", "error_contains": "outage"},
+    {"id": "missing_tool_is_rejected", "scenario": "missing_tool", "patients": false, "expected_status": "failed", "error_contains": "no tool evidence"},
+    {"id": "free_text_optimization_is_rejected", "scenario": "malformed_optimization", "patients": false, "expected_status": "failed", "error_contains": "optimized_smiles"}
+  ]
+}
