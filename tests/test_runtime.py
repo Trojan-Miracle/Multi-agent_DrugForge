@@ -108,6 +108,7 @@ def test_explicit_mcp_session_keeps_process_state():
         client = MultiServerMCPClient({'counter': {'command': sys.executable, 'args': [str(server)], 'transport': 'stdio'}})
         async with client.session('counter') as session:
             tools = await load_mcp_tools(session)
-            assert await tools[0].ainvoke({}) == '1'
-            assert await tools[0].ainvoke({}) == '2'
+            from workflow_runtime import content_text
+            assert content_text(await tools[0].ainvoke({})) == '1'
+            assert content_text(await tools[0].ainvoke({})) == '2'
     asyncio.run(asyncio.wait_for(run(), timeout=15))

@@ -38,9 +38,9 @@ def which(name): return shutil.which(name) or ""
 
 def check_python(demo=False):
     v = sys.version_info
-    good = v.major == 3 and (v.minor >= 11 if demo else v.minor == 11)
+    good = v.major == 3 and (v.minor >= 11 if demo else v.minor >= 12)
     return {"name":"python_version","ok":good,"required":True,"found":f"{v.major}.{v.minor}.{v.micro}",
-            "expected": "3.11+ (demo)" if demo else "3.11.x (full model environment)"}
+            "expected": "3.11+ (demo)" if demo else "3.12+ (full model environment)"}
 
 def check_os():
     return {"name":"os","ok":True,"required":False,"found":platform.platform()}
@@ -76,7 +76,7 @@ def check_gpu():
 
 def check_core_pkgs(demo=False):
     res=[]
-    names = ["langgraph", "langchain_openai", "langchain_mcp_adapters", "mcp", "langgraph.checkpoint.sqlite.aio"] if demo else CORE_PKGS
+    names = ["langgraph", "langchain", "langchain_openai", "langchain_mcp_adapters", "mcp", "langgraph.checkpoint.sqlite.aio"] if demo else list(dict.fromkeys([*CORE_PKGS, 'langchain']))
     for name in names:
         try:
             mod = __import__(name)

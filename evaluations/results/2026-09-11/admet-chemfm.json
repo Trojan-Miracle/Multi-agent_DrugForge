@@ -1,0 +1,96 @@
+{
+  "dataset": "TDC ADMET group",
+  "source": {
+    "url": "https://dataverse.harvard.edu/api/access/datafile/4426004",
+    "sha256": "bd0005246cb6f1672333c28ad202112a8bf071ab65d847848715030308faf1f1"
+  },
+  "split": "official fixed test",
+  "model_training_overlap": "ChemFM adapters were trained on TDC; checkpoint training membership has not been independently verified.",
+  "scope": "Retrospective benchmark reproduction, not external clinical validation.",
+  "endpoints": {
+    "herg": {
+      "test_size": 132,
+      "test_sha256": "14277bd932dce885e2f7a8d706effb455816f983e05b230f4f1c9590eb6c4248",
+      "train_test_exact_overlap_removed": 0,
+      "baseline": [
+        {
+          "seed": 0,
+          "n": 132,
+          "auroc": 0.7861561119293078,
+          "auprc": 0.8859361079687564,
+          "brier": 0.14577950040788545
+        },
+        {
+          "seed": 1,
+          "n": 132,
+          "auroc": 0.7936671575846833,
+          "auprc": 0.8887389702237984,
+          "brier": 0.14364598349137636
+        },
+        {
+          "seed": 2,
+          "n": 132,
+          "auroc": 0.8107511045655376,
+          "auprc": 0.9079485017509827,
+          "brier": 0.1406611516167915
+        }
+      ],
+      "chemfm": {
+        "status": "completed",
+        "n": 132,
+        "auroc": 0.9721649484536082,
+        "auprc": 0.990484315311555,
+        "brier": 0.061181047502430495,
+        "source": {
+          "base_model": "ChemFM/ChemFM-3B",
+          "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+          "adapter": "ChemFM/admet_herg",
+          "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+        },
+        "seconds": 18.05998236592859
+      }
+    },
+    "ames": {
+      "test_size": 1457,
+      "test_sha256": "d87e29ad1f188d6ee4fcdd5c3c3aa4ba15e4fec657553353d0d951ad8df02d3f",
+      "train_test_exact_overlap_removed": 0,
+      "baseline": [
+        {
+          "seed": 0,
+          "n": 1457,
+          "auroc": 0.8432816385674283,
+          "auprc": 0.8909435630281115,
+          "brier": 0.15895449528457764
+        },
+        {
+          "seed": 1,
+          "n": 1457,
+          "auroc": 0.8438700581566116,
+          "auprc": 0.8901689903610376,
+          "brier": 0.15904348273765645
+        },
+        {
+          "seed": 2,
+          "n": 1457,
+          "auroc": 0.8446885586167734,
+          "auprc": 0.8892792936117616,
+          "brier": 0.15821107261159886
+        }
+      ],
+      "chemfm": {
+        "status": "completed",
+        "n": 1457,
+        "auroc": 0.9771328986273473,
+        "auprc": 0.9836190327058065,
+        "brier": 0.05551631752093399,
+        "source": {
+          "base_model": "ChemFM/ChemFM-3B",
+          "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+          "adapter": "ChemFM/admet_ames",
+          "adapter_revision": "a1f703a6ab8965ee5bda53c9d189ec50bac7cfaf"
+        },
+        "seconds": 35.505169422365725
+      }
+    }
+  }
+}

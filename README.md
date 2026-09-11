@@ -8,7 +8,7 @@
 
 `Python` · `LangGraph` · `MCP` · `Human-in-the-loop`
 
-[快速体验](#快速体验) · [架构设计](#架构设计) · [模型配置](docs/SETUP.md) · [验证范围](docs/VALIDATION.md)
+[快速体验](#快速体验) · [架构设计](#架构设计) · [模型配置](docs/SETUP.md) · [真实验证](docs/SCIENCE_VALIDATION.md)
 
 </div>
 
@@ -74,8 +74,10 @@ python evaluate.py             # 运行离线任务基准，输出评测报告
 
 ## 验证与边界
 
-本地 **61 项测试通过**，覆盖结构化交接、调用前校验、跨进程恢复、人工确认、证据完整性、成本统计与本地 MCP 会话。[CI](.github/workflows/tests.yml) 配置 Python 3.11 / 3.13 检查，并生成演示文件。
+自动化测试覆盖结构化交接、跨进程恢复、人工确认、证据完整性、成本统计、MCP 会话及科学计算回归。[CI](.github/workflows/tests.yml) 配置 Python 3.11 / 3.13 工程检查与独立的 CPU 科学测试。
 
-真实模型链路仍需配置和联调，药研效果尚未验证。恢复以图节点为边界，失败节点内部的工具调用可能重做；端点语义和临床预测校准需独立验证。
+已完成 **DeepSeek → MCP → RDKit 真实调用**、**DrugGen GPU 分子生成**、**Vina 实验结构重对接**及 **ChemFM hERG / Ames 公开基准复现与基线比较**。1IEP 已知口袋姿态偏差为 0.36 Å，P2Rank 自动口袋分支为 12.64 Å，成功与失败结果均保留。[查看方法、原始结果和复现命令](docs/SCIENCE_VALIDATION.md)。
+
+三组 DrugAssist 优化对照均未改善最终 hERG 风险预测，负结果也已公开。这些实验不证明新分子的药效；完整临床链路与患者匹配仍需验证。恢复以图节点为边界，失败节点内部的工具调用可能重做。
 
 → [数据、恢复与评测指南](docs/ENGINEERING.md) · [模型配置与工具目录](docs/SETUP.md) · [详细验证范围与已知限制](docs/VALIDATION.md)

@@ -7,17 +7,32 @@
 ## 真实模型运行
 
 
-完整模型环境以 Python 3.11 为目标。`requirements.txt` 保留原始模型环境依赖并固定核心编排版本，全量环境尚未完成复现。
+轻量编排支持 Python 3.11 / 3.13；科学计算与完整模型环境使用 Python 3.12 以上，本机验证使用 3.13。依赖按用途拆分：`requirements-dev.txt` 为编排与测试，`requirements-science.txt` 增加 CPU 科学计算，`requirements.txt` 增加 GPU 模型适配器。版本与兼容性例外见[版本记录](DEPENDENCIES.md)。
 
 ```bash
 python -m pip install -r requirements.txt
-# 按推理环境另行安装 llama-cpp-python、accelerate、bitsandbytes
 # 并配置各模型权重以及以下外部代码：
 git clone https://github.com/mahsasheikh/DrugGen.git
 git clone https://github.com/RyanWangZf/MediTab.git
 ```
 
-对接还需 AutoDock Vina、Open Babel、Java 和 P2Rank。原始环境使用 Vina 1.1.2、Open Babel 3.1.1、P2Rank 2.5.1；模型和工具之间的版本兼容性需在实际环境验证。
+对接使用 Vina 1.2.7、Open Babel 3.2.1、P2Rank 2.5.1 和 Java 25 LTS。Linux x86_64 可安装到仓库忽略的 `.tools/`，不覆盖系统工具：
+
+```bash
+bash scripts/install-science-tools.sh  # 需要 curl、tar、cmake、C++ 编译器
+source scripts/activate-tools.sh
+```
+
+`llama-cpp-python` 默认安装不保证启用 CUDA。GPU 构建需 CUDA 编译工具，并按显卡架构配置 `CMAKE_ARGS`。Panacea、临床预测和可选 pKa 模型尚未完成新版环境联调。
+
+本机 RTX 3090 的 CUDA 构建命令（其他显卡需调整架构号）：
+
+```bash
+CMAKE_ARGS="-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86" \
+CUDACXX=/usr/local/cuda/bin/nvcc CMAKE_BUILD_PARALLEL_LEVEL=4 \
+python -m pip install --force-reinstall --no-deps --no-cache-dir \
+  --no-binary=llama-cpp-python llama-cpp-python==0.3.35
+```
 
 参考 [配置模板](../.env.example) 设置环境变量，程序不会自动加载该文件：
 
@@ -31,6 +46,8 @@ git clone https://github.com/RyanWangZf/MediTab.git
 | `DRUGASSIST_MODEL_PATH` | 本地 GGUF 路径；未设置时尝试下载 |
 | `HF_TOKEN` | 可选，用于 Hugging Face 服务或模型访问 |
 | `MEDITAB_MODEL_PATH` | 可选，专门训练的单 logit 二分类检查点，正类必须代表成功；校准效果需独立验证 |
+| `DEEPSEEK_MAX_TOKENS` | 每次请求输出上限，默认 4096，不是整个任务的费用上限 |
+| `CHEMFM_BACKEND` | 默认远端 Space；`local` 使用本机 CUDA，目前只支持 hERG 和 Ames 分类端点 |
 
 ```bash
 export DEEPSEEK_API_KEY="your-key"
@@ -78,7 +95,7 @@ python DrugForge.py --resume YOUR_RUN_ID
 
 仓库附带合成患者 XML。原项目的数据生成说明引用了 [Synthea](https://github.com/synthetichealth/synthea) 和 [patient2trial](https://github.com/surdatta/patient2trial)；患者匹配解析器实际读取 `topic / text_version` 格式。
 
-当前测试验证流程和软件行为。分子生成质量、ADMET 端点解释、患者匹配效果、临床预测校准和完整模型链路仍需独立验证，详见[验证说明](VALIDATION.md)。
+工程测试与真实工具实验分开报告，运行方法及实际结果见[科学验证](SCIENCE_VALIDATION.md)。患者匹配、临床预测校准和完整模型链路仍需独立验证。
 
 ## MCP 服务目录
 

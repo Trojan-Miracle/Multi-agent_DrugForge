@@ -12,7 +12,10 @@ from rdkit import Chem
 from rdkit.Chem import Descriptors, Crippen, rdMolDescriptors
 from rdkit.Chem.rdMolDescriptors import CalcExactMolWt
 
-from pkapredict import predict_pKa , load_model
+def predict_pKa(**kwargs):
+    from pkapredict import predict_pKa as predict
+    return predict(**kwargs)
+
 import os, sys
 
 os.environ["PYTHONUTF8"] = "1"
@@ -114,6 +117,7 @@ def _logD_base(logP: float, pKa: float, pH: float = 7.4) -> float:
 
 @lru_cache(maxsize=1)
 def _cached_model():
+    from pkapredict import load_model
     m = load_model()
     return m
 
@@ -180,7 +184,7 @@ def logd_base_batch(smiles_list: List[str], pH: float = 7.4) -> Dict[str, Any]:
 
 @mcp.tool()
 def rdkit_physchem_batch(smiles_list: List[str], pH: float = 7.4) -> Dict[str, Any]:
-    model = _cached_model()
+    """Compute RDKit descriptors. Use predict_all_batch for optional pKa/logD models."""
     results: List[Optional[Dict[str, Any]]] = [None] * len(smiles_list)
     errors: Dict[int, str] = {}
 
@@ -188,12 +192,6 @@ def rdkit_physchem_batch(smiles_list: List[str], pH: float = 7.4) -> Dict[str, A
         try:
             m = _mol_from_smiles(s)
             props = _rdkit_physchem(m)
-            y = predict_pKa(smiles=s, model=model, descriptor_names=DESCRIPTOR_NAMES)
-            pKa = float(np.asarray(y).ravel()[0])
-            props["pKa"] = pKa
-            # add both logDs; caller can choose which to use
-            props["logD_acid"] = _logD_acid(props["logP"], pKa, pH)
-            props["logD_base"] = _logD_base(props["logP"], pKa, pH)
             results[i] = props
         except Exception as e:
             errors[i] = f"{s}: {e}"
@@ -307,6 +305,8 @@ def select_leads_by_rules(results: List[Dict[str, Any]], n: int = 4) -> Dict[str
 @mcp.tool()
 def select_leads_from_smiles(smiles_list: List[str], n: int = 5, pH: float = 7.4) -> Dict[str, Any]:
     computed = rdkit_physchem_batch(smiles_list=smiles_list, pH=pH)
+    if computed.get("errors"):
+        return {"error": "Invalid molecules in RDKit input", "errors": computed["errors"]}
     results = computed.get("results", []) if isinstance(computed, dict) else []
     selection = select_leads_by_rules(results=results, n=n)
     return {

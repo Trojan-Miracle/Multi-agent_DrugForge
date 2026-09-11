@@ -217,7 +217,7 @@ def normalize(tool, payload, args, source, context):
         def add(smi, endpoint, result, path):
             if result.get('prediction') is None:
                 raise ValueError('ADMET result has no prediction')
-            observe(smi, endpoint, result['prediction'], path + '/prediction')
+            observe(smi, endpoint, result['prediction'], path + '/prediction', result.get('unit'))
         if tool == 'chemfm_predict_single':
             endpoint = payload['property']
             if 'smiles' in payload:

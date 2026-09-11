@@ -17,14 +17,21 @@ def get_drugassist():
         model_path = hf_hub_download(
             repo_id="blazerye/DrugAssist-7B",
             filename="DrugAssist-7B-4bit.gguf",
+            revision="83337f83d30caca6c1dae77dccf8f3f13e119cb7",
             token=os.environ.get("HF_TOKEN") or None,
         )
-    return Llama(model_path=model_path)
+    return Llama(model_path=model_path, n_ctx=2048, n_threads=4,
+                 n_gpu_layers=int(os.environ.get('DRUGASSIST_GPU_LAYERS', '-1')),
+                 seed=int(os.environ.get('DRUGASSIST_SEED', '42')), verbose=False)
 
 def _optimize(prompt: str):
     with _inference_lock:
         return get_drugassist().create_chat_completion(
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=512, temperature=0.2,
+            response_format={'type': 'json_object', 'schema': {
+                'type': 'object', 'properties': {'optimized_smiles': {'type': 'string'}},
+                'required': ['optimized_smiles'], 'additionalProperties': False}},
         )["choices"][0]["message"]
 
 mcp = FastMCP("MolOptServer")
@@ -43,6 +50,9 @@ async def molecule_optimizer(smiles: str, properties: str, action: str):
     try:
         message = await asyncio.to_thread(_optimize, prompt)
         result = json.loads(message["content"])
+        from rdkit import Chem
+        if not isinstance(result.get('optimized_smiles'), str) or Chem.MolFromSmiles(result['optimized_smiles']) is None:
+            raise ValueError('Optimizer returned chemically invalid SMILES')
         from contracts import molecule
         molecule(result["optimized_smiles"], "validation", "/optimized_smiles")
         return json.dumps({"optimized_smiles": result["optimized_smiles"], "original_smiles": smiles})

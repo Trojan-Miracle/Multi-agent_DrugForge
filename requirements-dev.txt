@@ -1,8 +1,11 @@
-# Lightweight orchestration / offline demo; no GPU models required.
-langgraph==0.6.7
-langchain-openai==0.3.33
-langchain-mcp-adapters==0.1.9
-mcp==1.15.0
-pytest>=8,<9
-langgraph-checkpoint-sqlite==2.0.11
-aiosqlite==0.21.0
+# Core orchestration and engineering tests; Python >=3.11.
+langgraph==1.2.11
+langchain==1.4.0
+langchain-openai==1.6.2
+langchain-mcp-adapters==0.3.2
+# Latest adapters require MCP <2; do not override the resolver.
+mcp==1.30.0
+pytest==9.1.1
+langgraph-checkpoint-sqlite==3.1.1
+aiosqlite==0.22.1
+pydantic==2.13.5

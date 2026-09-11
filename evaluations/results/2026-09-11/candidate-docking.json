@@ -1,0 +1,85 @@
+{
+  "kind": "real_generated_candidate_docking",
+  "target": "P27487",
+  "scope": "Rule-prefiltered DrugGen candidates; top predicted pocket, Vina exhaustiveness=4. Scores are not experimental affinities.",
+  "cases": [
+    {
+      "smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@@H](CO)O1",
+      "status": "completed",
+      "result": {
+        "score_kcal_mol": -6.599,
+        "center": [
+          38.0815,
+          48.4988,
+          53.3076
+        ],
+        "size": 25.316,
+        "tools": {
+          "vina": "AutoDock Vina v1.2.7",
+          "obabel": "Open Babel 3.2.1 -- Sep 11 2026 -- 18:28:02",
+          "rdkit": "2026.03.6",
+          "p2rank": "2.5.1"
+        }
+      },
+      "seconds": 30.383797542192042,
+      "structure_inputs": [
+        {
+          "file": "2QT9.pdb",
+          "sha256": "98114bdff038e63fe46762fdd8906fc3e0423267727338b771dafea9d69a27cb"
+        }
+      ]
+    },
+    {
+      "smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+      "status": "completed",
+      "result": {
+        "score_kcal_mol": -6.977,
+        "center": [
+          38.0815,
+          48.4988,
+          53.3076
+        ],
+        "size": 25.316,
+        "tools": {
+          "vina": "AutoDock Vina v1.2.7",
+          "obabel": "Open Babel 3.2.1 -- Sep 11 2026 -- 18:28:02",
+          "rdkit": "2026.03.6",
+          "p2rank": "2.5.1"
+        }
+      },
+      "seconds": 34.871360196731985,
+      "structure_inputs": [
+        {
+          "file": "2QT9.pdb",
+          "sha256": "98114bdff038e63fe46762fdd8906fc3e0423267727338b771dafea9d69a27cb"
+        }
+      ]
+    },
+    {
+      "smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+      "status": "completed",
+      "result": {
+        "score_kcal_mol": -7.172,
+        "center": [
+          38.0815,
+          48.4988,
+          53.3076
+        ],
+        "size": 25.316,
+        "tools": {
+          "vina": "AutoDock Vina v1.2.7",
+          "obabel": "Open Babel 3.2.1 -- Sep 11 2026 -- 18:28:02",
+          "rdkit": "2026.03.6",
+          "p2rank": "2.5.1"
+        }
+      },
+      "seconds": 36.15639331936836,
+      "structure_inputs": [
+        {
+          "file": "2QT9.pdb",
+          "sha256": "98114bdff038e63fe46762fdd8906fc3e0423267727338b771dafea9d69a27cb"
+        }
+      ]
+    }
+  ]
+}

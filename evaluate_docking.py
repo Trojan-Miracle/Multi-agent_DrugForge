@@ -48,15 +48,10 @@ def _rmsd_heavy_atoms(ref_mol_path: str, docked_mol_path: str) -> Optional[float
     if ref_mol.GetNumAtoms() != docked_mol.GetNumAtoms():
         return None
     try:
-        return rdMolAlign.GetBestRMS(docked_mol, ref_mol)
+        # Preserve the receptor coordinate frame: alignment hides misplaced poses.
+        return float(rdMolAlign.CalcRMS(docked_mol, ref_mol))
     except Exception:
-        amap = _relaxed_full_mapping(ref_mol, docked_mol)
-        if not amap:
-            return None
-        try:
-            return float(rdMolAlign.AlignMol(docked_mol, ref_mol, atomMap=amap))
-        except Exception:
-            return None
+        return None  # Do not relax bond identity to manufacture a correspondence.
 
 def _mol_to_sdf_via_obabel(mol_path: str, sdf_path: str):
     first = ""
@@ -227,6 +222,16 @@ def sdf_to_pdbqt(sdf_path: str, pdbqt_out: str):
 
 def evaluate_redocking_case(case_name: str, receptor_in: str, ligand_in: str, out_dir: str,
                             use_p2rank: bool = True, exhaustiveness: int = 4) -> Dict:
+    original_cwd, old_exh = Path.cwd(), dm.EXH
+    try:
+        return _evaluate_redocking_case(case_name, str(Path(receptor_in).resolve()),
+            str(Path(ligand_in).resolve()), str(Path(out_dir).resolve()), use_p2rank, exhaustiveness)
+    finally:
+        os.chdir(original_cwd)
+        dm.EXH = old_exh
+
+
+def _evaluate_redocking_case(case_name, receptor_in, ligand_in, out_dir, use_p2rank, exhaustiveness):
     start_time = time.time()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -253,9 +258,13 @@ def evaluate_redocking_case(case_name: str, receptor_in: str, ligand_in: str, ou
         cx, cy, cz, box = top_pocket["cx"], top_pocket["cy"], top_pocket["cz"], top_pocket["size"]
         pocket_resids = set(top_pocket["residue_ids"].split())
     else:
-        cx, cy, cz, box = dm.predict_docking_box(
-            receptor_pdb, pdb_id, chain=None, ligand_pdb=None, p2rank_only=False
-        )
+        # Known-pocket control uses the experimental ligand, never P2Rank.
+        ref = _load_mol_via_sdf(ligand_in)
+        if ref is None:
+            raise ValueError('Cannot read experimental ligand for known-pocket control')
+        xyz = ref.GetConformer().GetPositions()
+        cx, cy, cz = (xyz.min(axis=0) + xyz.max(axis=0)) / 2
+        box = float((xyz.max(axis=0) - xyz.min(axis=0)).max() + 8)
         pocket_resids = set()
     box = max(dm.BOX_MIN, min(dm.MAX_BOX_SIZE, float(box)))
     old_exh = dm.EXH
@@ -340,7 +349,7 @@ def evaluate_astex_dataset(dataset_path: str, out_dir: str, exhaustiveness: int 
         "successful": len(results["complexes"]),
         "failures": len(failures),
         "failure_details": failures,
-        "success_rate_rmsd_2A": (success_count / len(results["complexes"]) * 100) if results["complexes"] else 0.0,
+        "success_rate_rmsd_2A": success_count / len(complex_dirs) * 100,
         "mean_rmsd": (sum(rmsd_values) / len(rmsd_values)) if rmsd_values else None,
         "mean_runtime_sec": (sum(runtimes) / len(runtimes)) if runtimes else None,
         "mean_pocket_precision": (sum(pocket_accuracies) / len(pocket_accuracies)) if pocket_accuracies else None,
@@ -357,6 +366,10 @@ def evaluate_astex_dataset(dataset_path: str, out_dir: str, exhaustiveness: int 
     return results
 
 if __name__ == "__main__":
-    dataset_path = r"path\to\astex_diverse_set"
-    out_dir = r"path\to\out_dir"
-    results = evaluate_astex_dataset(dataset_path, out_dir, exhaustiveness=4)
+    import argparse
+    parser = argparse.ArgumentParser(description='Evaluate a locally supplied Astex dataset; failed cases remain in the denominator.')
+    parser.add_argument('dataset', type=Path)
+    parser.add_argument('--output', type=Path, default=Path('runs/astex'))
+    parser.add_argument('--exhaustiveness', type=int, default=32)
+    args = parser.parse_args()
+    evaluate_astex_dataset(args.dataset.resolve(), args.output.resolve(), args.exhaustiveness)

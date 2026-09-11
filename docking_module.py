@@ -540,7 +540,9 @@ def smiles_to_pdbqt(smiles: str, note_path: str = "ligand_prep.json") -> str:
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError("Invalid SMILES.")
-    mol, boron_replaced = replace_boron_with_carbon(mol)
+    if any(atom.GetAtomicNum() == 5 for atom in mol.GetAtoms()):
+        raise ValueError('Boron requires explicit validated docking atom parameters; refusing to replace it with carbon')
+    boron_replaced = False
     mol3d = build_3d_minimize(mol, seed=42)
     sdf_tmp = "ligand_tmp.sdf"
     with Chem.SDWriter(sdf_tmp) as w:
@@ -584,11 +586,11 @@ def run_vina(rec_pqt, lig_pqt, cx, cy, cz, box) -> float:
         "--seed", "42",
         "--cpu", "1",
         "--out", "pose_best.pdbqt",
-        "--log", "vina.log",
     ]
     try:
         cp = subprocess.run(cmd, check=True, capture_output=True, text=True)
         out_all = (cp.stdout or "") + "\n" + (cp.stderr or "")
+        Path("vina.log").write_text(out_all)
         for ln in out_all.splitlines():
             if ln.strip().startswith("1 "):
                 parts = ln.split()

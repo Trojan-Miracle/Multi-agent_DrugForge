@@ -1,0 +1,22 @@
+{
+  "kind": "live_llm_mcp_rdkit_smoke",
+  "model": "deepseek-flash",
+  "tool_outputs": [
+    "Error executing tool rdkit_physchem_batch: No module named 'pkapredict'"
+  ],
+  "llm_calls": [
+    {
+      "model": "deepseek-flash",
+      "input_tokens": 333,
+      "output_tokens": 91
+    },
+    {
+      "model": "deepseek-flash",
+      "input_tokens": 455,
+      "output_tokens": 102
+    }
+  ],
+  "summary": "The tool call failed with the error: **`No module named 'pkapredict'`**\n\nNo RDKit properties were computed for either molecule (aspirin or ethanol). The backend environment for this tool is missing the `pkapredict` module it depends on, so the batch request could not execute at all—it returned an error rather than any property values.\n\nLet me know if you'd like me to retry, or if there's an alternative tool/approach you'd prefer for these calculations.",
+  "scope": "Real API and real RDKit; not a full drug-discovery run.",
+  "status": "failed"
+}

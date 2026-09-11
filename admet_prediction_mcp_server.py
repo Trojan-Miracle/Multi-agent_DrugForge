@@ -42,7 +42,7 @@ def _as_smiles_list(smiles):
     # fallback: force to str
     return [str(smiles).strip()]
 def _client():
-    return Client(SPACE_ID, hf_token=os.environ.get("HF_TOKEN") or None, verbose=False)
+    return Client(SPACE_ID, token=os.environ.get("HF_TOKEN") or None, verbose=False, analytics_enabled=False)
 
 @mcp.tool(
     name="chemfm_list_properties",
@@ -69,6 +69,12 @@ def chemfm_get_description(property_name: str = "Drug Oral Bioavailability") -> 
     description="Predict ONE property for ONE or MANY SMILES via /predict_single_label. Input 'smiles' can be a string or list of strings."
 )
 def chemfm_predict_single(smiles: str | list[str], property_name: str) -> dict:
+    if os.environ.get('CHEMFM_BACKEND') == 'local':
+        try:
+            from chemfm_local import predict_local
+            return predict_local(_as_smiles_list(smiles), property_name)
+        except Exception as exc:
+            return {'ok': False, 'error': str(exc), 'property': property_name}
     if property_name not in PROPERTIES:
         return {"ok": False, "error": f"Unknown property '{property_name}'. Use chemfm_list_properties first."}
 
@@ -113,6 +119,20 @@ def chemfm_predict_single(smiles: str | list[str], property_name: str) -> dict:
     description="Predict MANY properties for ONE or MANY SMILES (loops /predict_single_label). 'smiles' can be a string or list of strings."
 )
 def chemfm_predict_many(smiles: str | list[str], properties: list[str]) -> dict:
+    if os.environ.get('CHEMFM_BACKEND') == 'local':
+        smiles_list = _as_smiles_list(smiles)
+        if not properties or not smiles_list:
+            return {'ok': False, 'error': 'Provide molecules and properties'}
+        results = {s: {} for s in smiles_list}
+        sources = {}
+        for prop in properties:
+            response = chemfm_predict_single(smiles_list, prop)
+            if not response.get('ok'):
+                return response
+            sources[prop] = response['source']
+            for row in response['results']:
+                results[row['smiles']][prop] = row
+        return {'ok': True, 'results': results, 'sources': sources}
     if not isinstance(properties, (list, tuple)) or not properties:
         return {"ok": False, "error": "Provide a non-empty list of property names."}
     unknown = [p for p in properties if p not in PROPERTIES]

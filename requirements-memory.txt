@@ -1,0 +1,2 @@
+# Optional hosted memory integration.
+mem0ai==2.0.20

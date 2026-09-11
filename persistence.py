@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-GRAPH_VERSION = 2
+GRAPH_VERSION = 3
 
 @contextmanager
 def run_lease(path):

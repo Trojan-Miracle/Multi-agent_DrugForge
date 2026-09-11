@@ -1,0 +1,708 @@
+{
+  "kind": "paired_real_optimization_pilot",
+  "target": "P27487",
+  "seed": 42,
+  "requested_candidates": 3,
+  "n": 3,
+  "max_rounds": 3,
+  "objective": "decrease predicted hERG blockage risk",
+  "optimizer": {
+    "repo": "blazerye/DrugAssist-7B",
+    "revision": "83337f83d30caca6c1dae77dccf8f3f13e119cb7"
+  },
+  "scope": "Same-model proxy score, three-candidate pilot; no independent efficacy claim. No docking rerun.",
+  "cases": [
+    {
+      "baseline": {
+        "smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@@H](CO)O1",
+        "herg_probability": 0.01965411938726902,
+        "passes_rules": true,
+        "selection": {
+          "pH": 7.4,
+          "results_count": 1,
+          "leads": [
+            {
+              "canonical_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@@H](CO)O1",
+              "MW": 267.245,
+              "ExactMW": 267.096753896,
+              "logP": -1.6575000000000002,
+              "MR": 64.18070000000002,
+              "TPSA": 139.28,
+              "HBD": 4,
+              "HBA": 7,
+              "RotB": 2,
+              "FractionCSP3": 0.5,
+              "BertzCT": 665.4740310883701,
+              "NumAromaticRings": 2,
+              "NumAliphaticRings": 1,
+              "QED": 0.5103728382686842
+            }
+          ],
+          "rejected": [],
+          "criteria": {
+            "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+            "veber": "RotB<=10, TPSA<=140"
+          }
+        },
+        "prediction_source": {
+          "base_model": "ChemFM/ChemFM-3B",
+          "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+          "adapter": "ChemFM/admet_herg",
+          "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+        }
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "input_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@@H](CO)O1",
+          "tool_output": {
+            "optimized_smiles": "CC(CCBr)C[C@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+            "original_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@@H](CO)O1"
+          },
+          "status": "completed",
+          "assessment": {
+            "smiles": "CC(CCBr)C[C@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+            "herg_probability": 0.6187154054641724,
+            "passes_rules": true,
+            "selection": {
+              "pH": 7.4,
+              "results_count": 1,
+              "leads": [
+                {
+                  "canonical_smiles": "CC(CCBr)C[C@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+                  "MW": 386.25000000000017,
+                  "ExactMW": 385.0749516,
+                  "logP": 1.1613999999999995,
+                  "MR": 89.28690000000002,
+                  "TPSA": 119.05000000000001,
+                  "HBD": 3,
+                  "HBA": 6,
+                  "RotB": 5,
+                  "FractionCSP3": 0.6428571428571429,
+                  "BertzCT": 745.5782327863482,
+                  "NumAromaticRings": 2,
+                  "NumAliphaticRings": 1,
+                  "QED": 0.6639169352285434
+                }
+              ],
+              "rejected": [],
+              "criteria": {
+                "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+                "veber": "RotB<=10, TPSA<=140"
+              }
+            },
+            "prediction_source": {
+              "base_model": "ChemFM/ChemFM-3B",
+              "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+              "adapter": "ChemFM/admet_herg",
+              "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+            }
+          },
+          "unchanged": false
+        },
+        {
+          "round": 2,
+          "input_smiles": "CC(CCBr)C[C@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+          "tool_output": {
+            "optimized_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@H](CO)O1",
+            "original_smiles": "CC(CCBr)C[C@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O"
+          },
+          "status": "completed",
+          "assessment": {
+            "smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@H](CO)O1",
+            "herg_probability": 0.019720224663615227,
+            "passes_rules": true,
+            "selection": {
+              "pH": 7.4,
+              "results_count": 1,
+              "leads": [
+                {
+                  "canonical_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@H](CO)O1",
+                  "MW": 267.245,
+                  "ExactMW": 267.096753896,
+                  "logP": -1.6575000000000002,
+                  "MR": 64.18070000000002,
+                  "TPSA": 139.28,
+                  "HBD": 4,
+                  "HBA": 7,
+                  "RotB": 2,
+                  "FractionCSP3": 0.5,
+                  "BertzCT": 665.4740310883701,
+                  "NumAromaticRings": 2,
+                  "NumAliphaticRings": 1,
+                  "QED": 0.5103728382686842
+                }
+              ],
+              "rejected": [],
+              "criteria": {
+                "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+                "veber": "RotB<=10, TPSA<=140"
+              }
+            },
+            "prediction_source": {
+              "base_model": "ChemFM/ChemFM-3B",
+              "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+              "adapter": "ChemFM/admet_herg",
+              "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+            }
+          },
+          "unchanged": false
+        },
+        {
+          "round": 3,
+          "input_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@H](CO)O1",
+          "tool_output": {
+            "optimized_smiles": "CC(CCBr)C[C@@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+            "original_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@H](CO)O1"
+          },
+          "status": "completed",
+          "assessment": {
+            "smiles": "CC(CCBr)C[C@@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+            "herg_probability": 0.643882691860199,
+            "passes_rules": true,
+            "selection": {
+              "pH": 7.4,
+              "results_count": 1,
+              "leads": [
+                {
+                  "canonical_smiles": "CC(CCBr)C[C@@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+                  "MW": 386.25000000000017,
+                  "ExactMW": 385.0749516,
+                  "logP": 1.1613999999999995,
+                  "MR": 89.28690000000002,
+                  "TPSA": 119.05000000000001,
+                  "HBD": 3,
+                  "HBA": 6,
+                  "RotB": 5,
+                  "FractionCSP3": 0.6428571428571429,
+                  "BertzCT": 745.5782327863482,
+                  "NumAromaticRings": 2,
+                  "NumAliphaticRings": 1,
+                  "QED": 0.6639169352285434
+                }
+              ],
+              "rejected": [],
+              "criteria": {
+                "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+                "veber": "RotB<=10, TPSA<=140"
+              }
+            },
+            "prediction_source": {
+              "base_model": "ChemFM/ChemFM-3B",
+              "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+              "adapter": "ChemFM/admet_herg",
+              "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+            }
+          },
+          "unchanged": false
+        }
+      ],
+      "final": {
+        "smiles": "CC(CCBr)C[C@@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+        "herg_probability": 0.643882691860199,
+        "passes_rules": true,
+        "selection": {
+          "pH": 7.4,
+          "results_count": 1,
+          "leads": [
+            {
+              "canonical_smiles": "CC(CCBr)C[C@@H]1O[C@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+              "MW": 386.25000000000017,
+              "ExactMW": 385.0749516,
+              "logP": 1.1613999999999995,
+              "MR": 89.28690000000002,
+              "TPSA": 119.05000000000001,
+              "HBD": 3,
+              "HBA": 6,
+              "RotB": 5,
+              "FractionCSP3": 0.6428571428571429,
+              "BertzCT": 745.5782327863482,
+              "NumAromaticRings": 2,
+              "NumAliphaticRings": 1,
+              "QED": 0.6639169352285434
+            }
+          ],
+          "rejected": [],
+          "criteria": {
+            "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+            "veber": "RotB<=10, TPSA<=140"
+          }
+        },
+        "prediction_source": {
+          "base_model": "ChemFM/ChemFM-3B",
+          "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+          "adapter": "ChemFM/admet_herg",
+          "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+        }
+      },
+      "completed_rounds": 3,
+      "delta_predicted_risk": 0.62422857247293,
+      "improved_and_passes_rules": false,
+      "morgan_tanimoto_to_start": 0.7,
+      "seconds": 18.450967581942677
+    },
+    {
+      "baseline": {
+        "smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+        "herg_probability": 0.019685843959450722,
+        "passes_rules": true,
+        "selection": {
+          "pH": 7.4,
+          "results_count": 1,
+          "leads": [
+            {
+              "canonical_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+              "MW": 267.245,
+              "ExactMW": 267.096753896,
+              "logP": -1.6575000000000002,
+              "MR": 64.18070000000002,
+              "TPSA": 139.28,
+              "HBD": 4,
+              "HBA": 7,
+              "RotB": 2,
+              "FractionCSP3": 0.5,
+              "BertzCT": 665.4740310883701,
+              "NumAromaticRings": 2,
+              "NumAliphaticRings": 1,
+              "QED": 0.5103728382686842
+            }
+          ],
+          "rejected": [],
+          "criteria": {
+            "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+            "veber": "RotB<=10, TPSA<=140"
+          }
+        },
+        "prediction_source": {
+          "base_model": "ChemFM/ChemFM-3B",
+          "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+          "adapter": "ChemFM/admet_herg",
+          "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+        }
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "input_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+          "tool_output": {
+            "optimized_smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+            "original_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1"
+          },
+          "status": "completed",
+          "assessment": {
+            "smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+            "herg_probability": 0.5618921518325806,
+            "passes_rules": true,
+            "selection": {
+              "pH": 7.4,
+              "results_count": 1,
+              "leads": [
+                {
+                  "canonical_smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+                  "MW": 386.25000000000017,
+                  "ExactMW": 385.0749516,
+                  "logP": 1.1613999999999995,
+                  "MR": 89.28690000000002,
+                  "TPSA": 119.05000000000001,
+                  "HBD": 3,
+                  "HBA": 6,
+                  "RotB": 5,
+                  "FractionCSP3": 0.6428571428571429,
+                  "BertzCT": 745.5782327863482,
+                  "NumAromaticRings": 2,
+                  "NumAliphaticRings": 1,
+                  "QED": 0.6639169352285434
+                }
+              ],
+              "rejected": [],
+              "criteria": {
+                "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+                "veber": "RotB<=10, TPSA<=140"
+              }
+            },
+            "prediction_source": {
+              "base_model": "ChemFM/ChemFM-3B",
+              "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+              "adapter": "ChemFM/admet_herg",
+              "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+            }
+          },
+          "unchanged": false
+        },
+        {
+          "round": 2,
+          "input_smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+          "tool_output": {
+            "optimized_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+            "original_smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O"
+          },
+          "status": "completed",
+          "assessment": {
+            "smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+            "herg_probability": 0.019685843959450722,
+            "passes_rules": true,
+            "selection": {
+              "pH": 7.4,
+              "results_count": 1,
+              "leads": [
+                {
+                  "canonical_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+                  "MW": 267.245,
+                  "ExactMW": 267.096753896,
+                  "logP": -1.6575000000000002,
+                  "MR": 64.18070000000002,
+                  "TPSA": 139.28,
+                  "HBD": 4,
+                  "HBA": 7,
+                  "RotB": 2,
+                  "FractionCSP3": 0.5,
+                  "BertzCT": 665.4740310883701,
+                  "NumAromaticRings": 2,
+                  "NumAliphaticRings": 1,
+                  "QED": 0.5103728382686842
+                }
+              ],
+              "rejected": [],
+              "criteria": {
+                "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+                "veber": "RotB<=10, TPSA<=140"
+              }
+            },
+            "prediction_source": {
+              "base_model": "ChemFM/ChemFM-3B",
+              "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+              "adapter": "ChemFM/admet_herg",
+              "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+            }
+          },
+          "unchanged": false
+        },
+        {
+          "round": 3,
+          "input_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+          "tool_output": {
+            "optimized_smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+            "original_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1"
+          },
+          "status": "completed",
+          "assessment": {
+            "smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+            "herg_probability": 0.5618921518325806,
+            "passes_rules": true,
+            "selection": {
+              "pH": 7.4,
+              "results_count": 1,
+              "leads": [
+                {
+                  "canonical_smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+                  "MW": 386.25000000000017,
+                  "ExactMW": 385.0749516,
+                  "logP": 1.1613999999999995,
+                  "MR": 89.28690000000002,
+                  "TPSA": 119.05000000000001,
+                  "HBD": 3,
+                  "HBA": 6,
+                  "RotB": 5,
+                  "FractionCSP3": 0.6428571428571429,
+                  "BertzCT": 745.5782327863482,
+                  "NumAromaticRings": 2,
+                  "NumAliphaticRings": 1,
+                  "QED": 0.6639169352285434
+                }
+              ],
+              "rejected": [],
+              "criteria": {
+                "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+                "veber": "RotB<=10, TPSA<=140"
+              }
+            },
+            "prediction_source": {
+              "base_model": "ChemFM/ChemFM-3B",
+              "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+              "adapter": "ChemFM/admet_herg",
+              "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+            }
+          },
+          "unchanged": false
+        }
+      ],
+      "final": {
+        "smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+        "herg_probability": 0.5618921518325806,
+        "passes_rules": true,
+        "selection": {
+          "pH": 7.4,
+          "results_count": 1,
+          "leads": [
+            {
+              "canonical_smiles": "CC(CCBr)C[C@H]1O[C@@H](n2cnc3c(N)[nH]c(=O)nc32)C[C@@H]1O",
+              "MW": 386.25000000000017,
+              "ExactMW": 385.0749516,
+              "logP": 1.1613999999999995,
+              "MR": 89.28690000000002,
+              "TPSA": 119.05000000000001,
+              "HBD": 3,
+              "HBA": 6,
+              "RotB": 5,
+              "FractionCSP3": 0.6428571428571429,
+              "BertzCT": 745.5782327863482,
+              "NumAromaticRings": 2,
+              "NumAliphaticRings": 1,
+              "QED": 0.6639169352285434
+            }
+          ],
+          "rejected": [],
+          "criteria": {
+            "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+            "veber": "RotB<=10, TPSA<=140"
+          }
+        },
+        "prediction_source": {
+          "base_model": "ChemFM/ChemFM-3B",
+          "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+          "adapter": "ChemFM/admet_herg",
+          "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+        }
+      },
+      "completed_rounds": 3,
+      "delta_predicted_risk": 0.5422063078731298,
+      "improved_and_passes_rules": false,
+      "morgan_tanimoto_to_start": 0.7,
+      "seconds": 2.6464234041050076
+    },
+    {
+      "baseline": {
+        "smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+        "herg_probability": 0.02880420722067356,
+        "passes_rules": true,
+        "selection": {
+          "pH": 7.4,
+          "results_count": 1,
+          "leads": [
+            {
+              "canonical_smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+              "MW": 285.235,
+              "ExactMW": 285.08733208399997,
+              "logP": -1.8409000000000002,
+              "MR": 62.702800000000025,
+              "TPSA": 139.54000000000002,
+              "HBD": 4,
+              "HBA": 8,
+              "RotB": 2,
+              "FractionCSP3": 0.5,
+              "BertzCT": 649.8548135685061,
+              "NumAromaticRings": 2,
+              "NumAliphaticRings": 1,
+              "QED": 0.4718336471857849
+            }
+          ],
+          "rejected": [],
+          "criteria": {
+            "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+            "veber": "RotB<=10, TPSA<=140"
+          }
+        },
+        "prediction_source": {
+          "base_model": "ChemFM/ChemFM-3B",
+          "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+          "adapter": "ChemFM/admet_herg",
+          "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+        }
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "input_smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+          "tool_output": {
+            "optimized_smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O",
+            "original_smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O"
+          },
+          "status": "completed",
+          "assessment": {
+            "smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O",
+            "herg_probability": 0.14024950563907623,
+            "passes_rules": true,
+            "selection": {
+              "pH": 7.4,
+              "results_count": 1,
+              "leads": [
+                {
+                  "canonical_smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O",
+                  "MW": 399.4990000000001,
+                  "ExactMW": 399.173809062,
+                  "logP": 1.1885999999999997,
+                  "MR": 98.76600000000002,
+                  "TPSA": 128.54,
+                  "HBD": 3,
+                  "HBA": 8,
+                  "RotB": 4,
+                  "FractionCSP3": 0.6875,
+                  "BertzCT": 840.060343938655,
+                  "NumAromaticRings": 2,
+                  "NumAliphaticRings": 1,
+                  "QED": 0.5164805352800637
+                }
+              ],
+              "rejected": [],
+              "criteria": {
+                "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+                "veber": "RotB<=10, TPSA<=140"
+              }
+            },
+            "prediction_source": {
+              "base_model": "ChemFM/ChemFM-3B",
+              "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+              "adapter": "ChemFM/admet_herg",
+              "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+            }
+          },
+          "unchanged": false
+        },
+        {
+          "round": 2,
+          "input_smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O",
+          "tool_output": {
+            "optimized_smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+            "original_smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O"
+          },
+          "status": "completed",
+          "assessment": {
+            "smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+            "herg_probability": 0.02880420722067356,
+            "passes_rules": true,
+            "selection": {
+              "pH": 7.4,
+              "results_count": 1,
+              "leads": [
+                {
+                  "canonical_smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+                  "MW": 285.235,
+                  "ExactMW": 285.08733208399997,
+                  "logP": -1.8409000000000002,
+                  "MR": 62.702800000000025,
+                  "TPSA": 139.54000000000002,
+                  "HBD": 4,
+                  "HBA": 8,
+                  "RotB": 2,
+                  "FractionCSP3": 0.5,
+                  "BertzCT": 649.8548135685061,
+                  "NumAromaticRings": 2,
+                  "NumAliphaticRings": 1,
+                  "QED": 0.4718336471857849
+                }
+              ],
+              "rejected": [],
+              "criteria": {
+                "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+                "veber": "RotB<=10, TPSA<=140"
+              }
+            },
+            "prediction_source": {
+              "base_model": "ChemFM/ChemFM-3B",
+              "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+              "adapter": "ChemFM/admet_herg",
+              "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+            }
+          },
+          "unchanged": false
+        },
+        {
+          "round": 3,
+          "input_smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+          "tool_output": {
+            "optimized_smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O",
+            "original_smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O"
+          },
+          "status": "completed",
+          "assessment": {
+            "smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O",
+            "herg_probability": 0.14024950563907623,
+            "passes_rules": true,
+            "selection": {
+              "pH": 7.4,
+              "results_count": 1,
+              "leads": [
+                {
+                  "canonical_smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O",
+                  "MW": 399.4990000000001,
+                  "ExactMW": 399.173809062,
+                  "logP": 1.1885999999999997,
+                  "MR": 98.76600000000002,
+                  "TPSA": 128.54,
+                  "HBD": 3,
+                  "HBA": 8,
+                  "RotB": 4,
+                  "FractionCSP3": 0.6875,
+                  "BertzCT": 840.060343938655,
+                  "NumAromaticRings": 2,
+                  "NumAliphaticRings": 1,
+                  "QED": 0.5164805352800637
+                }
+              ],
+              "rejected": [],
+              "criteria": {
+                "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+                "veber": "RotB<=10, TPSA<=140"
+              }
+            },
+            "prediction_source": {
+              "base_model": "ChemFM/ChemFM-3B",
+              "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+              "adapter": "ChemFM/admet_herg",
+              "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+            }
+          },
+          "unchanged": false
+        }
+      ],
+      "final": {
+        "smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O",
+        "herg_probability": 0.14024950563907623,
+        "passes_rules": true,
+        "selection": {
+          "pH": 7.4,
+          "results_count": 1,
+          "leads": [
+            {
+              "canonical_smiles": "CC(C)(C)[Si](C)(C)OC[C@H]1O[C@@H](n2cnc3c(N)nc(F)nc32)[C@H](O)[C@@H]1O",
+              "MW": 399.4990000000001,
+              "ExactMW": 399.173809062,
+              "logP": 1.1885999999999997,
+              "MR": 98.76600000000002,
+              "TPSA": 128.54,
+              "HBD": 3,
+              "HBA": 8,
+              "RotB": 4,
+              "FractionCSP3": 0.6875,
+              "BertzCT": 840.060343938655,
+              "NumAromaticRings": 2,
+              "NumAliphaticRings": 1,
+              "QED": 0.5164805352800637
+            }
+          ],
+          "rejected": [],
+          "criteria": {
+            "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+            "veber": "RotB<=10, TPSA<=140"
+          }
+        },
+        "prediction_source": {
+          "base_model": "ChemFM/ChemFM-3B",
+          "base_revision": "c1464dd3c51643d2d6926a71db98558be97e1ecf",
+          "adapter": "ChemFM/admet_herg",
+          "adapter_revision": "4d41c774f6947d67c725268d82f8b3f99dc41e2d"
+        }
+      },
+      "completed_rounds": 3,
+      "delta_predicted_risk": 0.11144529841840267,
+      "improved_and_passes_rules": false,
+      "morgan_tanimoto_to_start": 0.6909090909090909,
+      "seconds": 2.8869362073019147
+    }
+  ],
+  "summary": {
+    "evaluated": 3,
+    "improved_and_passes_rules": 0,
+    "failed_tool_rounds": 0
+  }
+}

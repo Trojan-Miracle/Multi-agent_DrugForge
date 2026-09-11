@@ -1,0 +1,6 @@
+{
+  "check": "hERG -> Ames -> hERG adapter switch",
+  "before": 0.13347169756889343,
+  "after": 0.13347169756889343,
+  "passed": true
+}

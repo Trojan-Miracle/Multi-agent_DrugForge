@@ -17,7 +17,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
@@ -220,13 +220,14 @@ class OptState(TypedDict):
 
 def ds(thinking: bool = False, pro: bool = False) -> ChatOpenAI:
     model = os.environ.get("DEEPSEEK_PRO_MODEL" if pro else "DEEPSEEK_MODEL",
-                           "deepseek-v4-pro" if pro else "deepseek-v4-flash")
-    kw = {"extra_body": {"thinking": {"type": "enabled"}}} if thinking else {}
+                           "deepseek-v4-pro" if pro else "deepseek-flash")
+    kw = {"extra_body": {"thinking": {"type": "enabled" if thinking else "disabled"}}}
     return ChatOpenAI(
         model=model,
         base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
         api_key=os.environ["DEEPSEEK_API_KEY"],
         timeout=90,
+        max_tokens=int(os.environ.get("DEEPSEEK_MAX_TOKENS", "4096")),
         max_retries=2,
         **kw,
     )
@@ -479,7 +480,7 @@ def build_live_graph(all_tools, checkpointer=None, record_sink=None):
         return [guard_tool(tool_map[n]) for n in names]
 
     def agent(prompt, names=(), thinking=False):
-        return create_react_agent(ds(thinking=thinking), select(*names), prompt=prompt)
+        return create_agent(ds(thinking=thinking), select(*names), system_prompt=prompt)
 
     planning = agent(PLANNING_START_SYS, thinking=True)
     final = agent(PLANNING_FINAL_SYS, thinking=True)
@@ -531,7 +532,7 @@ def parse_args(argv=None):
 
 
 def model_configuration():
-    return {'model': os.environ.get('DEEPSEEK_MODEL', 'deepseek-v4-flash'),
+    return {'model': os.environ.get('DEEPSEEK_MODEL', 'deepseek-flash'),
             'base_url': os.environ.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1')}
 
 

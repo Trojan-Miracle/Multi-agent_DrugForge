@@ -1,0 +1,79 @@
+{
+  "kind": "experimental_pose_redocking",
+  "case": "1IEP",
+  "pocket": "known",
+  "seed": 42,
+  "exhaustiveness": 32,
+  "center": [
+    15.19,
+    53.903,
+    16.917
+  ],
+  "size": [
+    20,
+    20,
+    20
+  ],
+  "top1_heavy_atom_rmsd_angstrom": 0.3597429669873464,
+  "top1_below_2_angstrom": true,
+  "vina_score_kcal_mol": -13.25,
+  "elapsed_seconds": 234.6049517504871,
+  "tools": {
+    "vina": "AutoDock Vina v1.2.7",
+    "obabel": "Open Babel 3.2.1 -- Sep 11 2026 -- 18:28:02",
+    "rdkit": "2026.03.6",
+    "p2rank": "2.5.1"
+  },
+  "sources": [
+    {
+      "url": "https://raw.githubusercontent.com/ccsb-scripps/AutoDock-Vina/v1.2.7/example/basic_docking/solution/1iep_receptor.pdbqt",
+      "sha256": "f13cf3b36f61d87c3b58983e0b8ecf1c3456a685eb86dfe9ccfb139c7bdc2586",
+      "file": "1iep_receptor.pdbqt"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ccsb-scripps/AutoDock-Vina/v1.2.7/example/basic_docking/solution/1iep_ligand.pdbqt",
+      "sha256": "15fb35648d8c18c70317842f3a0631b73a19429c710a037ab07310084d579bb8",
+      "file": "1iep_ligand.pdbqt"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ccsb-scripps/AutoDock-Vina/v1.2.7/example/basic_docking/data/1iep_ligand.sdf",
+      "sha256": "051b8742c32adc05c07fb486a4e7c9327f84e131cee33ac4e6a568d07553eb38",
+      "file": "1iep_ligand.sdf"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ccsb-scripps/AutoDock-Vina/v1.2.7/example/basic_docking/data/1iep_receptorH.pdb",
+      "sha256": "5f6aee6029f9a2a2c2be32d4eb948ae70808690573e1b69a0850cdffd7048ca7",
+      "file": "1iep_receptorH.pdb"
+    }
+  ],
+  "command": [
+    "vina",
+    "--receptor",
+    "1iep_receptor.pdbqt",
+    "--ligand",
+    "1iep_ligand.pdbqt",
+    "--exhaustiveness",
+    "32",
+    "--seed",
+    "42",
+    "--cpu",
+    "2",
+    "--num_modes",
+    "9",
+    "--out",
+    "poses.pdbqt",
+    "--center_x",
+    "15.19",
+    "--size_x",
+    "20",
+    "--center_y",
+    "53.903",
+    "--size_y",
+    "20",
+    "--center_z",
+    "16.917",
+    "--size_z",
+    "20"
+  ],
+  "scope": "Single public tutorial case; not a binding affinity or drug efficacy benchmark."
+}

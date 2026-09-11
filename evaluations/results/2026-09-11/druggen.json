@@ -1,0 +1,283 @@
+{
+  "kind": "real_druggen_generation",
+  "target": "P27487",
+  "seed": 42,
+  "model": "alimotahharynia/DrugGen",
+  "revision": "81c03fe27f2a6601e5b09046a549c71701b4fb05",
+  "target_source": {
+    "url": "https://rest.uniprot.org/uniprotkb/P27487.fasta",
+    "sha256": "60149465ca4297f1817ac1a5a8c1c8517fa66360e02f865956c9b601f76c0e6d",
+    "file": "target.fasta"
+  },
+  "generated_smiles": [
+    "CC(C)CCC[C@@H](C)CCC[C@@H](C)CCC[C@]1(C)CCC2=C(O1)C(C)=CC(C)=C2C",
+    "CC(C)CCC[C@@H](C)CCC[C@@H](C)CCC[C@]1(C)CCC2=C(O1)C(C)=CC=C2",
+    "CC(C)CCC[C@@H](C)CCC[C@@H](C)CCC[C@]1(C)CCC2=C(O1)C(C)=CC=C2C",
+    "CC(C)CCC[C@@H](C)CCC[C@@H](C)CCC[C@]1(C)CCC2=C(O1)C=C(C)C(O)=C2C",
+    "NC1=C2N=CN([C@@H]3C[C@H](O)[C@@H](CO)O3)C2=NC(=O)N1",
+    "NC1=C2N=CN([C@@H]3O[C@H](CO)[C@@H](O)[C@H]3O)C2=NC(F)=N1",
+    "NC1=C2N=CN([C@H]3C[C@H](O)[C@@H](CO)O3)C2=NC(=O)N1"
+  ],
+  "requested_count": 7,
+  "returned_count": 7,
+  "valid_count": 7,
+  "valid_fraction": 1.0,
+  "canonical_unique_count": 7,
+  "physchem": {
+    "results": [
+      {
+        "canonical_smiles": "Cc1cc(C)c2c(c1C)CC[C@@](C)(CCC[C@H](C)CCC[C@H](C)CCCC(C)C)O2",
+        "MW": 414.71800000000025,
+        "ExactMW": 414.38616621999995,
+        "logP": 9.134660000000002,
+        "MR": 132.72600000000006,
+        "TPSA": 9.23,
+        "HBD": 0,
+        "HBA": 1,
+        "RotB": 12,
+        "FractionCSP3": 0.7931034482758621,
+        "BertzCT": 658.8176926361994,
+        "NumAromaticRings": 1,
+        "NumAliphaticRings": 1,
+        "QED": 0.3310753644842517
+      },
+      {
+        "canonical_smiles": "Cc1cccc2c1O[C@](C)(CCC[C@H](C)CCC[C@H](C)CCCC(C)C)CC2",
+        "MW": 386.66400000000016,
+        "ExactMW": 386.35486609199995,
+        "logP": 8.517820000000006,
+        "MR": 123.2520000000001,
+        "TPSA": 9.23,
+        "HBD": 0,
+        "HBA": 1,
+        "RotB": 12,
+        "FractionCSP3": 0.7777777777777778,
+        "BertzCT": 575.6250597077952,
+        "NumAromaticRings": 1,
+        "NumAliphaticRings": 1,
+        "QED": 0.3495570777159986
+      },
+      {
+        "canonical_smiles": "Cc1ccc(C)c2c1CC[C@@](C)(CCC[C@H](C)CCC[C@H](C)CCCC(C)C)O2",
+        "MW": 400.6910000000002,
+        "ExactMW": 400.37051615599995,
+        "logP": 8.826240000000004,
+        "MR": 127.9890000000001,
+        "TPSA": 9.23,
+        "HBD": 0,
+        "HBA": 1,
+        "RotB": 12,
+        "FractionCSP3": 0.7857142857142857,
+        "BertzCT": 616.9849909126677,
+        "NumAromaticRings": 1,
+        "NumAliphaticRings": 1,
+        "QED": 0.3402947935113179
+      },
+      {
+        "canonical_smiles": "Cc1cc2c(c(C)c1O)CC[C@@](C)(CCC[C@H](C)CCC[C@H](C)CCCC(C)C)O2",
+        "MW": 416.6900000000002,
+        "ExactMW": 416.3654307759999,
+        "logP": 8.531840000000004,
+        "MR": 129.65380000000007,
+        "TPSA": 29.46,
+        "HBD": 1,
+        "HBA": 2,
+        "RotB": 12,
+        "FractionCSP3": 0.7857142857142857,
+        "BertzCT": 663.0932036772859,
+        "NumAromaticRings": 1,
+        "NumAliphaticRings": 1,
+        "QED": 0.36970078785337745
+      },
+      {
+        "canonical_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@@H](CO)O1",
+        "MW": 267.24499999999995,
+        "ExactMW": 267.096753896,
+        "logP": -1.6575000000000002,
+        "MR": 64.18070000000002,
+        "TPSA": 139.28,
+        "HBD": 4,
+        "HBA": 7,
+        "RotB": 2,
+        "FractionCSP3": 0.5,
+        "BertzCT": 665.4740310883701,
+        "NumAromaticRings": 2,
+        "NumAliphaticRings": 1,
+        "QED": 0.5103728382686842
+      },
+      {
+        "canonical_smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+        "MW": 285.235,
+        "ExactMW": 285.087332084,
+        "logP": -1.8409000000000002,
+        "MR": 62.70280000000002,
+        "TPSA": 139.54000000000002,
+        "HBD": 4,
+        "HBA": 8,
+        "RotB": 2,
+        "FractionCSP3": 0.5,
+        "BertzCT": 649.8548135685061,
+        "NumAromaticRings": 2,
+        "NumAliphaticRings": 1,
+        "QED": 0.4718336471857849
+      },
+      {
+        "canonical_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+        "MW": 267.24499999999995,
+        "ExactMW": 267.096753896,
+        "logP": -1.6575000000000002,
+        "MR": 64.18070000000002,
+        "TPSA": 139.28,
+        "HBD": 4,
+        "HBA": 7,
+        "RotB": 2,
+        "FractionCSP3": 0.5,
+        "BertzCT": 665.4740310883701,
+        "NumAromaticRings": 2,
+        "NumAliphaticRings": 1,
+        "QED": 0.5103728382686842
+      }
+    ],
+    "errors": {},
+    "pH": 7.4
+  },
+  "selection": {
+    "pH": 7.4,
+    "results_count": 7,
+    "leads": [
+      {
+        "canonical_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@@H]1C[C@H](O)[C@@H](CO)O1",
+        "MW": 267.24499999999995,
+        "ExactMW": 267.096753896,
+        "logP": -1.6575000000000002,
+        "MR": 64.18070000000002,
+        "TPSA": 139.28,
+        "HBD": 4,
+        "HBA": 7,
+        "RotB": 2,
+        "FractionCSP3": 0.5,
+        "BertzCT": 665.4740310883701,
+        "NumAromaticRings": 2,
+        "NumAliphaticRings": 1,
+        "QED": 0.5103728382686842
+      },
+      {
+        "canonical_smiles": "Nc1[nH]c(=O)nc2c1ncn2[C@H]1C[C@H](O)[C@@H](CO)O1",
+        "MW": 267.24499999999995,
+        "ExactMW": 267.096753896,
+        "logP": -1.6575000000000002,
+        "MR": 64.18070000000002,
+        "TPSA": 139.28,
+        "HBD": 4,
+        "HBA": 7,
+        "RotB": 2,
+        "FractionCSP3": 0.5,
+        "BertzCT": 665.4740310883701,
+        "NumAromaticRings": 2,
+        "NumAliphaticRings": 1,
+        "QED": 0.5103728382686842
+      },
+      {
+        "canonical_smiles": "Nc1nc(F)nc2c1ncn2[C@@H]1O[C@H](CO)[C@@H](O)[C@H]1O",
+        "MW": 285.235,
+        "ExactMW": 285.087332084,
+        "logP": -1.8409000000000002,
+        "MR": 62.70280000000002,
+        "TPSA": 139.54000000000002,
+        "HBD": 4,
+        "HBA": 8,
+        "RotB": 2,
+        "FractionCSP3": 0.5,
+        "BertzCT": 649.8548135685061,
+        "NumAromaticRings": 2,
+        "NumAliphaticRings": 1,
+        "QED": 0.4718336471857849
+      }
+    ],
+    "rejected": [
+      {
+        "compound": {
+          "canonical_smiles": "Cc1cc(C)c2c(c1C)CC[C@@](C)(CCC[C@H](C)CCC[C@H](C)CCCC(C)C)O2",
+          "MW": 414.71800000000025,
+          "ExactMW": 414.38616621999995,
+          "logP": 9.134660000000002,
+          "MR": 132.72600000000006,
+          "TPSA": 9.23,
+          "HBD": 0,
+          "HBA": 1,
+          "RotB": 12,
+          "FractionCSP3": 0.7931034482758621,
+          "BertzCT": 658.8176926361994,
+          "NumAromaticRings": 1,
+          "NumAliphaticRings": 1,
+          "QED": 0.3310753644842517
+        },
+        "reason": "Lipinski: logP>5; Veber: RotB>10"
+      },
+      {
+        "compound": {
+          "canonical_smiles": "Cc1cccc2c1O[C@](C)(CCC[C@H](C)CCC[C@H](C)CCCC(C)C)CC2",
+          "MW": 386.66400000000016,
+          "ExactMW": 386.35486609199995,
+          "logP": 8.517820000000006,
+          "MR": 123.2520000000001,
+          "TPSA": 9.23,
+          "HBD": 0,
+          "HBA": 1,
+          "RotB": 12,
+          "FractionCSP3": 0.7777777777777778,
+          "BertzCT": 575.6250597077952,
+          "NumAromaticRings": 1,
+          "NumAliphaticRings": 1,
+          "QED": 0.3495570777159986
+        },
+        "reason": "Lipinski: logP>5; Veber: RotB>10"
+      },
+      {
+        "compound": {
+          "canonical_smiles": "Cc1ccc(C)c2c1CC[C@@](C)(CCC[C@H](C)CCC[C@H](C)CCCC(C)C)O2",
+          "MW": 400.6910000000002,
+          "ExactMW": 400.37051615599995,
+          "logP": 8.826240000000004,
+          "MR": 127.9890000000001,
+          "TPSA": 9.23,
+          "HBD": 0,
+          "HBA": 1,
+          "RotB": 12,
+          "FractionCSP3": 0.7857142857142857,
+          "BertzCT": 616.9849909126677,
+          "NumAromaticRings": 1,
+          "NumAliphaticRings": 1,
+          "QED": 0.3402947935113179
+        },
+        "reason": "Lipinski: logP>5; Veber: RotB>10"
+      },
+      {
+        "compound": {
+          "canonical_smiles": "Cc1cc2c(c(C)c1O)CC[C@@](C)(CCC[C@H](C)CCC[C@H](C)CCCC(C)C)O2",
+          "MW": 416.6900000000002,
+          "ExactMW": 416.3654307759999,
+          "logP": 8.531840000000004,
+          "MR": 129.65380000000007,
+          "TPSA": 29.46,
+          "HBD": 1,
+          "HBA": 2,
+          "RotB": 12,
+          "FractionCSP3": 0.7857142857142857,
+          "BertzCT": 663.0932036772859,
+          "NumAromaticRings": 1,
+          "NumAliphaticRings": 1,
+          "QED": 0.36970078785337745
+        },
+        "reason": "Lipinski: logP>5; Veber: RotB>10"
+      }
+    ],
+    "criteria": {
+      "lipinski": "MW<=500, logP<=5, HBD<=5, HBA<=10",
+      "veber": "RotB<=10, TPSA<=140"
+    }
+  },
+  "seconds": 1.8227597223594785,
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "scope": "Generation and descriptor check only; no demonstrated binding or efficacy."
+}
