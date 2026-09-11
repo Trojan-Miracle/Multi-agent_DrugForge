@@ -16,7 +16,9 @@ _panacea = {"tok": None, "model": None}
 
 def get_panacea():
     if _panacea["tok"] is None or _panacea["model"] is None:
-        PANACEA_MODEL = os.getenv("PANACEA_MODEL", "path/to/panacea")
+        PANACEA_MODEL = os.environ.get("PANACEA_MODEL", "").strip()
+        if not PANACEA_MODEL:
+            raise RuntimeError("Set PANACEA_MODEL to your model path or repository ID")
         _panacea["tok"] = AutoTokenizer.from_pretrained(PANACEA_MODEL, padding_side="left")
         if _panacea["tok"].pad_token is None:
             _panacea["tok"].add_special_tokens({"pad_token": "[PAD]"})
@@ -155,6 +157,7 @@ async def match_patient_trial(
         return {"error": "No patients in this chunk", "retry": True}
 
     matches: List[Dict[str, Any]] = []
+    errors = []
     last_keep_alive = time.time()
     keep_alive_interval = 30
 
@@ -178,6 +181,7 @@ async def match_patient_trial(
                 top_p=0.9
             )
         except Exception as e:
+            errors.append({"pid": row.pid, "error": str(e)})
             logger.error(f"Generation error for pid={row.pid}: {e}")
             continue
 
@@ -198,6 +202,9 @@ async def match_patient_trial(
         "matched_patients_file": abs_path,
         "total_patients_parsed": int(len(patients_df)),
         "matched_patients_count": int(len(matches)),
+        "processed_patients_count": int(len(patients_df) - len(errors)),
+        "failed_patients_count": len(errors),
+        "errors": errors,
         "matches": matches
     }
     result_cache[cache_key] = result

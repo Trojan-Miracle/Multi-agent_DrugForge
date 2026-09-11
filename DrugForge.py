@@ -1,4 +1,7 @@
+import argparse
 import asyncio
+from contextlib import AsyncExitStack
+import secrets
 import json
 import os
 import sys
@@ -14,8 +17,10 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.tools import load_mcp_tools
 
 from state import RunState
+from workflow_runtime import make_agent_node, merge_stage_results, content_text
 
 PROJECT_DIR = Path(__file__).parent
 
@@ -76,41 +81,69 @@ _run: RunState | None = None
 _confirm_event: asyncio.Event | None = None
 _main_loop: asyncio.AbstractEventLoop | None = None
 
+_approval_lock = threading.Lock()
+_pending_approval: dict | None = None
+
 class VizHandler(BaseHTTPRequestHandler):
+    def send_json(self, code, value):
+        data = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         if self.path == "/":
+            data = (PROJECT_DIR / "viz.html").read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            with open("viz.html", "rb") as f:
-                self.wfile.write(f.read())
-        elif self.path == "/messages":
-            data = json.dumps(messages_store, ensure_ascii=False).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+        elif self.path == "/messages":
+            self.send_json(200, messages_store)
+        elif self.path == "/status":
+            with _approval_lock:
+                approval = dict(_pending_approval) if _pending_approval else None
+            self.send_json(200, {"status": _run.status if _run else "starting",
+                                 "approval": approval})
+        else:
+            self.send_json(404, {"error": "Not found"})
 
     def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        if content_length:
-            self.rfile.read(content_length)
-        if self.path == "/confirm":
-            if _main_loop and _confirm_event:
-                _main_loop.call_soon_threadsafe(_confirm_event.set)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            self.wfile.write(b'{"ok":true}')
+        global _pending_approval
+        if self.path != "/confirm":
+            self.send_json(404, {"error": "Not found"})
+            return
+        origin = self.headers.get("Origin")
+        port = self.server.server_port
+        if origin and origin not in {f"http://localhost:{port}", f"http://127.0.0.1:{port}"}:
+            self.send_json(403, {"error": "Origin rejected"})
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 4096:
+                raise ValueError("Invalid request size")
+            body = json.loads(self.rfile.read(size))
+            if not isinstance(body, dict):
+                raise ValueError("Expected JSON object")
+        except (ValueError, TypeError):
+            self.send_json(400, {"error": "Invalid confirmation request"})
+            return
+        with _approval_lock:
+            if (not _pending_approval or body.get("token") != _pending_approval["token"]
+                    or not _main_loop or _main_loop.is_closed() or not _confirm_event):
+                self.send_json(409, {"error": "Confirmation expired or no approval pending"})
+                return
+            _pending_approval = None
+            _main_loop.call_soon_threadsafe(_confirm_event.set)
+        self.send_json(200, {"ok": True})
 
     def log_message(self, format, *args):
         pass
 
-def start_viz_server():
-    server = HTTPServer(("localhost", 8765), VizHandler)
-    server.serve_forever()
 
 async def broadcast(agent: str, msg_type: str, content: str):
     messages_store.append({
@@ -144,14 +177,13 @@ def _unwrap_json_blocks(s: str) -> str:
     return "\n".join(results)
 
 def _validate_output():
-    for msg in reversed(messages_store):
-        if "FINAL" in msg["content"]:
-            if len(msg["content"]) > 200:
-                print("[验证] 最终报告完整", flush=True)
-            else:
-                print("[验证] 警告：包含 FINAL 但报告内容过短", flush=True)
-            return
-    print("[验证] 警告：未检测到 FINAL，流程可能提前终止", flush=True)
+    report = next((m["content"] for m in reversed(messages_store)
+                   if m["agent"] == "planning_final" and m["type"] == "AIMessage"), "")
+    sections = ("药物发现性质", "临床试验报告", "患者匹配", "试验成功概率", "总结")
+    if not report.strip().endswith("\nFINAL") or not all(x in report for x in sections):
+        raise RuntimeError("最终报告缺少必要章节或独立 FINAL 结束标记")
+    print("[验证] 报告格式检查通过（不代表科学结果已验证）", flush=True)
+    return report
 
 # ── 状态定义 ──────────────────────────────────────────────────────────────────
 
@@ -160,9 +192,11 @@ class DrugForgeState(TypedDict):
     opt_count: int       # 已完成的优化轮次
     opt_satisfied: bool  # 当前优化是否满足条件
     has_xml: bool        # 是否提供患者 XML 路径
+    stage_results: Annotated[dict, merge_stage_results]
 
 # OptState 与 DrugForgeState 共享字段，供优化子图使用
 class OptState(TypedDict):
+    stage_results: Annotated[dict, merge_stage_results]
     messages: Annotated[list, add_messages]
     opt_count: int
     opt_satisfied: bool
@@ -170,12 +204,15 @@ class OptState(TypedDict):
 # ── 模型工厂 ──────────────────────────────────────────────────────────────────
 
 def ds(thinking: bool = False, pro: bool = False) -> ChatOpenAI:
-    model = "deepseek-v4-pro" if pro else "deepseek-v4-flash"
-    kw = {"model_kwargs": {"extra_body": {"thinking": {"type": "enabled"}}}} if thinking else {}
+    model = os.environ.get("DEEPSEEK_PRO_MODEL" if pro else "DEEPSEEK_MODEL",
+                           "deepseek-v4-pro" if pro else "deepseek-v4-flash")
+    kw = {"extra_body": {"thinking": {"type": "enabled"}}} if thinking else {}
     return ChatOpenAI(
         model=model,
-        base_url="https://api.deepseek.com/v1",
+        base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
         api_key=os.environ["DEEPSEEK_API_KEY"],
+        timeout=90,
+        max_retries=2,
         **kw,
     )
 
@@ -215,7 +252,7 @@ CHEM_PROPERTIES_SYS = """你是化学性质专家。预测并报告分子的理�
       logd_acid_batch, logd_base_batch, predict_all_batch。
 不做 ADMET 预测、对接或临床试验生成。"""
 
-ADMET_PROPERTIES_SYS = """你是 ADMET 性质专家。预测分子的 ADMET 性质和对接评分。
+ADMET_PROPERTIES_SYS = """你是 ADMET 性质专家。只预测分子的 ADMET 性质。
 始终先运行 chemfm_list_properties 获取性质名称，再预测10个最相关性质
 （口服生物利用度、溶解度、清除率、BBB通透性、hERG抑制、肝毒性等）。
 工具：chemfm_list_properties, chemfm_get_description, chemfm_predict_single,
@@ -235,17 +272,9 @@ PATIENT_MATCHING_SYS = """你是患者匹配专家。
 使用 trial_generator_agent 生成的精确试验文本，返回匹配患者数量和 ID 列表。"""
 
 TRIAL_PRED_SYS = """你是试验预测专家。根据结构化试验文本预测临床试验成功概率（0-1）。
-只返回概率数值，不做其他操作。"""
+必须调用 predict_trial_success；工具失败时说明不可用，禁止自行推测概率。"""
 
 # ── Agent 节点工厂 ────────────────────────────────────────────────────────────
-
-def make_agent_node(display_name: str, agent):
-    async def node(state) -> dict:
-        result = await agent.ainvoke({"messages": state["messages"]})
-        new_msgs = result["messages"][len(state["messages"]):]
-        return {"messages": new_msgs}
-    node.__name__ = display_name
-    return node
 
 # ── 优化子图 ──────────────────────────────────────────────────────────────────
 
@@ -258,13 +287,14 @@ def build_opt_subgraph(opt_nodes: dict, eval_llm: ChatOpenAI):
     """
 
     async def eval_opt(state: OptState) -> dict:
-        resp = await eval_llm.ainvoke([
+        resp = await asyncio.wait_for(eval_llm.ainvoke([
             SystemMessage(content="""根据最近的 ADMET 和化学性质评估结果，
 判断当前优化的先导化合物是否同时满足：通过 Lipinski/Veber 规则、口服生物利用度>0.5、低毒性风险。
+仅当端点定义与单位明确、结果充分支持条件时回答 satisfied；缺失、错误或含糊结果回答 continue。
 只回答 satisfied 或 continue，不要加任何其他内容。"""),
             *state["messages"][-12:],
-        ])
-        satisfied = "satisfied" in resp.content.lower()
+        ]), timeout=120)
+        satisfied = isinstance(resp.content, str) and resp.content.strip().lower() == "satisfied"
         return {
             "opt_satisfied": satisfied,
             "opt_count": state.get("opt_count", 0) + 1,
@@ -333,25 +363,33 @@ def build_graph(nodes: dict, opt_subgraph):
 # ── 可视化流（支持中断恢复）────────────────────────────────────────────────────
 
 async def _stream_to_viz(graph, input_val, config: dict):
+    seen = set()
     # subgraphs=True 使子图内部各节点的更新也能实时推送到可视化面板
     async for chunk in graph.astream(input_val, config=config, stream_mode="updates", subgraphs=True):
         _ns, update = chunk
         for node_name, output in update.items():
+            if node_name == "__interrupt__" or not isinstance(output, dict):
+                continue
+            if _run and output.get("stage_results"):
+                _run.record_stages(output["stage_results"])
             for msg in output.get("messages", []):
+                if msg.id and msg.id in seen:
+                    continue
+                if msg.id:
+                    seen.add(msg.id)
                 if isinstance(msg, AIMessage):
-                    content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                    content = content_text(msg.content)
                     content = _unwrap_json_blocks(content)
                     if content.strip():
                         await broadcast(node_name, "AIMessage", content)
                 elif isinstance(msg, ToolMessage):
-                    content = _unwrap_json_blocks(str(msg.content))
-                    if len(content) > 500:
-                        content = content[:500] + "..."
+                    content = _unwrap_json_blocks(content_text(msg.content))
                     await broadcast(node_name, "ToolResult", f"[工具结果] {content}")
 
 async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
+    global _pending_approval
     # 从 Mem0 召回历史偏好，拼入首条消息给 planning_start 参考
-    past = mem0_recall(task)
+    past = await asyncio.to_thread(mem0_recall, task)
     task_msg = task if not past else f"{task}\n\n[用户历史偏好]\n{past}"
     if past:
         print(f"[Mem0] 召回 {len(past.splitlines())} 条历史偏好", flush=True)
@@ -361,141 +399,171 @@ async def run_with_viz(graph, task: str, has_xml: bool, config: dict):
         "opt_count": 0,
         "opt_satisfied": False,
         "has_xml": has_xml,
+        "stage_results": {},
     }
 
     await _stream_to_viz(graph, initial, config)
 
     # 处理子图内的中断：每次 mol_opt_agent 前暂停，等浏览器确认按钮
     while True:
-        state = graph.get_state(config)
+        state = graph.get_state(config, subgraphs=True)
         if not state.next:
             break
         opt_n = state.values.get("opt_count", 0)
+        for pending in state.tasks:
+            nested = getattr(pending, "state", None)
+            if hasattr(nested, "values"):
+                opt_n = nested.values.get("opt_count", opt_n)
+        _confirm_event.clear()
+        with _approval_lock:
+            _pending_approval = {"token": secrets.token_urlsafe(24), "round": opt_n + 1}
         await broadcast(
             "system", "WaitingConfirm",
-            f"[优化循环 {opt_n + 1}/3] 先导化合物已选出，请在可视化面板点击"确认"继续优化",
+            f"[优化循环 {opt_n + 1}/3] 先导化合物已选出，请在可视化面板点击“确认”继续优化",
         )
-        _confirm_event.clear()
         await _confirm_event.wait()
         # 用户确认后记录本轮优化偏好（异步保存，不阻塞主流程）
-        mem0_save(task, f"第{opt_n + 1}轮优化，用户确认继续，任务：{task}")
+        await asyncio.to_thread(mem0_save, task, f"第{opt_n + 1}轮优化，用户确认继续")
         await broadcast("system", "System", "继续优化中...")
         await _stream_to_viz(graph, None, config)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-async def main():
-    global _confirm_event, _main_loop
+def build_live_graph(all_tools):
+    tool_map = {t.name: t for t in all_tools}
+    if len(tool_map) != len(all_tools):
+        raise RuntimeError("Duplicate MCP tool names")
+
+    def select(*names):
+        missing = sorted(set(names) - tool_map.keys())
+        if missing:
+            raise RuntimeError(f"Missing required MCP tools: {missing}")
+        return [tool_map[n] for n in names]
+
+    def agent(prompt, names=(), thinking=False):
+        return create_react_agent(ds(thinking=thinking), select(*names), prompt=prompt)
+
+    planning = agent(PLANNING_START_SYS, thinking=True)
+    final = agent(PLANNING_FINAL_SYS, thinking=True)
+    druggen = agent(DRUGGEN_SYS, ("run_druggen",))
+    chemical = agent(CHEM_PROPERTIES_SYS, (
+        "select_leads_from_smiles", "predict_pka_batch", "logd_acid_batch",
+        "logd_base_batch", "rdkit_physchem_batch", "predict_all_batch"))
+    docking = agent("你负责分子对接初筛，只使用 run_docking，报告工具实际返回的评分和失败原因。", ("run_docking",))
+    admet = agent(ADMET_PROPERTIES_SYS, (
+        "chemfm_list_properties", "chemfm_get_description", "chemfm_predict_single", "chemfm_predict_many"))
+    optimizer = agent(MOL_OPT_SYS, ("molecule_optimizer",), thinking=True)
+    trial = agent(TRIAL_SYS, ("panacea_extract_components",), thinking=True)
+    prediction = agent(TRIAL_PRED_SYS, ("predict_trial_success",))
+    patient = agent(PATIENT_MATCHING_SYS, ("match_patient_trial",)) if "match_patient_trial" in tool_map else None
+
+    async def no_patient(state):
+        raise RuntimeError("Patient matching was not configured")
+
+    agents = {"planning_start": planning, "druggen_agent": druggen, "admet_docking": docking,
+              "chemical_filter": chemical, "admet_predict": admet, "admet_final": admet,
+              "trial_generator_agent": trial, "trial_prediction_agent": prediction,
+              "planning_final": final}
+    nodes = {name: make_agent_node(name, worker) for name, worker in agents.items()}
+    nodes["patient_matching_agent"] = make_agent_node("patient_matching_agent", patient) if patient else no_patient
+    opt_nodes = {name: make_agent_node(name, worker) for name, worker in
+                 {"mol_opt_agent": optimizer, "admet_reeval": admet, "chem_reeval": chemical}.items()}
+    return build_graph(nodes, build_opt_subgraph(opt_nodes, ds()))
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="DrugForge live workflow; use demo.py for offline mode")
+    parser.add_argument("--task", help="Task description; otherwise prompt interactively")
+    parser.add_argument("--patients", type=Path, help="Explicit patient XML file (optional)")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--exit-on-complete", action="store_true", help="Close the viewer after the run")
+    args = parser.parse_args(argv)
+    if not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    if args.patients:
+        args.patients = args.patients.expanduser().resolve()
+        if not args.patients.is_file() or args.patients.suffix.lower() != ".xml":
+            parser.error("--patients must point to an existing XML file")
+    return args
+
+
+async def main(args):
+    global _confirm_event, _main_loop, _run, _pending_approval
+    if not os.environ.get("DEEPSEEK_API_KEY"):
+        print("缺少 DEEPSEEK_API_KEY。无需密钥的演示请运行 python demo.py。", file=sys.stderr)
+        return 1
     _confirm_event = asyncio.Event()
-    _main_loop = asyncio.get_event_loop()
-
-    sys.stdout.reconfigure(encoding="utf-8")
-
+    _main_loop = asyncio.get_running_loop()
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     if os.environ.get("LANGCHAIN_API_KEY"):
         os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
         os.environ.setdefault("LANGCHAIN_PROJECT", "DrugForge")
-        print("[LangSmith] 追踪已启用", flush=True)
-
-    if os.environ.get("MEM0_API_KEY"):
-        print("[Mem0] 跨会话记忆已启用", flush=True)
-    else:
-        print("[Mem0] 未设置 MEM0_API_KEY，跳过记忆功能", flush=True)
-
-    servers = {
-        "druggen":     {"command": sys.executable, "args": ["druggen_mcp_server.py"],            "transport": "stdio", "cwd": str(PROJECT_DIR)},
-        "docking":     {"command": sys.executable, "args": ["docking_mcp_server.py"],            "transport": "stdio", "cwd": str(PROJECT_DIR)},
-        "chemical":    {"command": sys.executable, "args": ["chemical_properties_mcp_sever.py"], "transport": "stdio", "cwd": str(PROJECT_DIR)},
-        "admet":       {"command": sys.executable, "args": ["admet_prediction_mcp_server.py"],   "transport": "stdio", "cwd": str(PROJECT_DIR)},
-        "name2smiles": {"command": sys.executable, "args": ["name2smiles_mcp_server.py"],        "transport": "stdio", "cwd": str(PROJECT_DIR)},
-        "mol_opt":     {"command": sys.executable, "args": ["mol_opt_mcp_server.py"],            "transport": "stdio", "cwd": str(PROJECT_DIR)},
-        "patient":     {"command": sys.executable, "args": ["patient_matching_mcp_server.py"],   "transport": "stdio", "cwd": str(PROJECT_DIR)},
-        "trialgen":    {"command": sys.executable, "args": ["trialgen_mcp_server.py"],           "transport": "stdio", "cwd": str(PROJECT_DIR)},
-        "trialpred":   {"command": sys.executable, "args": ["trialpred_mcp_server.py"],          "transport": "stdio", "cwd": str(PROJECT_DIR)},
-    }
-
-    async with MultiServerMCPClient(servers) as client:
-        all_tools = client.get_tools()
-        tool_map = {t.name: t for t in all_tools}
-
-        def select(*names):
-            return [tool_map[n] for n in names if n in tool_map]
-
-        planning_r   = create_react_agent(ds(thinking=True), [], prompt=PLANNING_START_SYS)
-        planning_f_r = create_react_agent(ds(thinking=True), [], prompt=PLANNING_FINAL_SYS)
-        druggen_r    = create_react_agent(ds(), select("run_druggen"), prompt=DRUGGEN_SYS)
-        chem_r       = create_react_agent(ds(), select(
-            "select_leads_from_smiles", "predict_pka_batch", "logd_acid_batch",
-            "logd_base_batch", "rdkit_physchem_batch", "predict_all_batch",
-        ), prompt=CHEM_PROPERTIES_SYS)
-        admet_r      = create_react_agent(ds(), select(
-            "get_drug_name_from_smiles", "get_smiles_from_drug_name",
-            "chemfm_list_properties", "chemfm_get_description",
-            "chemfm_predict_single", "chemfm_predict_many", "run_docking",
-        ), prompt=ADMET_PROPERTIES_SYS)
-        mol_opt_r    = create_react_agent(ds(thinking=True), select("molecule_optimizer"), prompt=MOL_OPT_SYS)
-        trial_gen_r  = create_react_agent(ds(thinking=True), select("panacea_extract_components"), prompt=TRIAL_SYS)
-        patient_r    = create_react_agent(ds(), select("match_patient_trial"), prompt=PATIENT_MATCHING_SYS)
-        known = {
-            "run_druggen", "select_leads_from_smiles", "predict_pka_batch", "logd_acid_batch",
-            "logd_base_batch", "rdkit_physchem_batch", "predict_all_batch",
-            "get_drug_name_from_smiles", "get_smiles_from_drug_name", "chemfm_list_properties",
-            "chemfm_get_description", "chemfm_predict_single", "chemfm_predict_many", "run_docking",
-            "molecule_optimizer", "panacea_extract_components", "match_patient_trial",
-        }
-        trial_pred_r = create_react_agent(
-            ds(), [t for t in all_tools if t.name not in known], prompt=TRIAL_PRED_SYS
-        )
-
-        nodes = {
-            "planning_start":         make_agent_node("planning_agent",              planning_r),
-            "druggen_agent":          make_agent_node("druggen_agent",               druggen_r),
-            "admet_docking":          make_agent_node("admet_properties_agent",      admet_r),
-            "chemical_filter":        make_agent_node("chemical_agent",              chem_r),
-            "admet_predict":          make_agent_node("admet_properties_agent",      admet_r),
-            # 优化子图节点（在 build_opt_subgraph 内部注册）
-            "admet_final":            make_agent_node("admet_properties_agent",      admet_r),
-            "trial_generator_agent":  make_agent_node("trial_generator_agent",       trial_gen_r),
-            "patient_matching_agent": make_agent_node("patient_matching_agent",      patient_r),
-            "trial_prediction_agent": make_agent_node("trial_prediction_agent",      trial_pred_r),
-            "planning_final":         make_agent_node("planning_agent",              planning_f_r),
+    task = (args.task if args.task is not None else input("请输入你的任务：")).strip()
+    task = task or "模拟DPP4(P27487)的药物开发"
+    if args.patients:
+        task += f"\n患者 XML 文件：{args.patients}"
+    _run = RunState(task=task)
+    messages_store.clear()
+    server = None
+    try:
+        server = HTTPServer(("127.0.0.1", args.port), VizHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        print(f"运行记录：{_run.run_id}\n可视化：http://localhost:{args.port}", flush=True)
+        await broadcast("system", "System", "正在连接模型工具，请稍候…")
+        servers = {
+            "druggen":     {"command": sys.executable, "args": ["druggen_mcp_server.py"],            "transport": "stdio", "cwd": str(PROJECT_DIR)},
+            "docking":     {"command": sys.executable, "args": ["docking_mcp_server.py"],            "transport": "stdio", "cwd": str(PROJECT_DIR)},
+            "chemical":    {"command": sys.executable, "args": ["chemical_properties_mcp_sever.py"], "transport": "stdio", "cwd": str(PROJECT_DIR)},
+            "admet":       {"command": sys.executable, "args": ["admet_prediction_mcp_server.py"],   "transport": "stdio", "cwd": str(PROJECT_DIR)},
+            "name2smiles": {"command": sys.executable, "args": ["name2smiles_mcp_server.py"],        "transport": "stdio", "cwd": str(PROJECT_DIR)},
+            "mol_opt":     {"command": sys.executable, "args": ["mol_opt_mcp_server.py"],            "transport": "stdio", "cwd": str(PROJECT_DIR)},
+            "patient":     {"command": sys.executable, "args": ["patient_matching_mcp_server.py"],   "transport": "stdio", "cwd": str(PROJECT_DIR)},
+            "trialgen":    {"command": sys.executable, "args": ["trialgen_mcp_server.py"],           "transport": "stdio", "cwd": str(PROJECT_DIR)},
+            "trialpred":   {"command": sys.executable, "args": ["trialpred_mcp_server.py"],          "transport": "stdio", "cwd": str(PROJECT_DIR)},
         }
 
-        opt_nodes = {
-            "mol_opt_agent": make_agent_node("molecule_optimization_agent", mol_opt_r),
-            "admet_reeval":  make_agent_node("admet_properties_agent",      admet_r),
-            "chem_reeval":   make_agent_node("chemical_agent",              chem_r),
-        }
+        if not args.patients:
+            servers.pop("patient")
+        # Explicit sessions keep model processes alive across calls and close them after the run.
+        client = MultiServerMCPClient(servers)
+        async with AsyncExitStack() as stack:
+            all_tools = []
+            for name in servers:
+                await broadcast("system", "System", f"连接工具服务：{name}")
+                session = await stack.enter_async_context(client.session(name))
+                all_tools.extend(await load_mcp_tools(session))
+            graph = build_live_graph(all_tools)
+            config = {"configurable": {"thread_id": _run.run_id}, "recursion_limit": 30}
+            await run_with_viz(graph, task, bool(args.patients), config)
+            report = _validate_output()
+            _run.path.with_suffix(".md").write_text(report, encoding="utf-8")
+        _run.done()
+        await broadcast("system", "System", "流程已完成，报告和运行记录已保存。")
+        if not args.exit_on_complete:
+            print("面板保持可用，按 Ctrl+C 退出。", flush=True)
+            await asyncio.Event().wait()
+        return 0
+    except asyncio.CancelledError:
+        if _run.status == "running":
+            _run.failed("用户中止运行")
+        raise
+    except Exception as exc:
+        _run.failed(str(exc))
+        await broadcast("system", "Error", f"运行失败：{exc}")
+        print(f"运行失败：{exc}\n详情：{_run.path}", file=sys.stderr, flush=True)
+        return 1
+    finally:
+        with _approval_lock:
+            _pending_approval = None
+        if server:
+            await asyncio.to_thread(server.shutdown)
+            server.server_close()
 
-        opt_subgraph = build_opt_subgraph(opt_nodes, ds())
-        graph = build_graph(nodes, opt_subgraph)
-
-        task = input("请输入你的任务：").strip() or "模拟DPP4(P27487)的药物开发"
-        has_xml = ".xml" in task or "xml" in task.lower()
-
-        global _run
-        _run = RunState(task=task)
-        run: RunState = _run
-        print(f"Run ID: {run.run_id}", flush=True)
-
-        config = {"configurable": {"thread_id": run.run_id}}
-
-        threading.Thread(target=start_viz_server, daemon=True).start()
-        print("\n可视化面板：http://localhost:8765", flush=True)
-        print("按回车开始运行...", flush=True)
-        input()
-
-        try:
-            await run_with_viz(graph, task, has_xml, config)
-            _validate_output()
-            run.done()
-        except Exception as e:
-            print(f"运行出错：{e}", flush=True)
-            run.failed(str(e))
-        finally:
-            print(f"\n运行完成  run_id={run.run_id}", flush=True)
-            print("服务器保持运行，可刷新浏览器查看结果", flush=True)
-            while True:
-                await asyncio.sleep(60)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        sys.exit(asyncio.run(main(parse_args())))
+    except KeyboardInterrupt:
+        print("\n已退出。")
+        sys.exit(130)

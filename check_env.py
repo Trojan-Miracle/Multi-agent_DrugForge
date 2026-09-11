@@ -21,7 +21,7 @@ CORE_PKGS = ["torch", "transformers", "rdkit", "openai", "mcp", "llama_cpp",
 MCP_SERVERS = [
     "druggen_mcp_server.py",
     "docking_mcp_server.py",
-    "chemical_properties_mcp_server.py",
+    "chemical_properties_mcp_sever.py",
     "admet_prediction_mcp_server.py",
     "mol_opt_mcp_server.py",
     "name2smiles_mcp_server.py",
@@ -36,11 +36,11 @@ def warn(x): return "\033[93mWARN\033[0m"
 
 def which(name): return shutil.which(name) or ""
 
-def check_python():
+def check_python(demo=False):
     v = sys.version_info
-    good = (v.major == REQUIRED_PYTHON_MAJOR and v.minor == REQUIRED_PYTHON_MINOR)
+    good = v.major == 3 and (v.minor >= 11 if demo else v.minor == 11)
     return {"name":"python_version","ok":good,"required":True,"found":f"{v.major}.{v.minor}.{v.micro}",
-            "expected":f"{REQUIRED_PYTHON_MAJOR}.{REQUIRED_PYTHON_MINOR}.x"}
+            "expected": "3.11+ (demo)" if demo else "3.11.x (full model environment)"}
 
 def check_os():
     return {"name":"os","ok":True,"required":False,"found":platform.platform()}
@@ -74,9 +74,10 @@ def check_gpu():
         info["ok"]=False; info["found"]=f"PyTorch not importable ({e})"
     return info
 
-def check_core_pkgs():
+def check_core_pkgs(demo=False):
     res=[]
-    for name in CORE_PKGS:
+    names = ["langgraph", "langchain_openai", "langchain_mcp_adapters", "mcp"] if demo else CORE_PKGS
+    for name in names:
         try:
             mod = __import__(name)
             ver = getattr(mod,"__version__","unknown")
@@ -89,7 +90,7 @@ def check_api_key():
     key = os.environ.get("DEEPSEEK_API_KEY", "")
     if not key:
         return {"name":"env:DEEPSEEK_API_KEY","ok":False,"required":True,"found":"NOT SET"}
-    return {"name":"env:DEEPSEEK_API_KEY","ok":True,"required":True,"found":f"{key[:8]}..."}
+    return {"name":"env:DEEPSEEK_API_KEY","ok":True,"required":True,"found":"SET (redacted)"}
 
 def check_mcp_files():
     missing = [s for s in MCP_SERVERS if not (PROJECT_DIR / s).exists()]
@@ -105,7 +106,7 @@ def check_deepseek_api():
         return {"name":"deepseek_api","ok":False,"required":True,"found":"跳过（API key 未设置）"}
     try:
         req = urllib.request.Request(
-            "https://api.deepseek.com/v1/models",
+            os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1").rstrip("/") + "/models",
             headers={"Authorization": f"Bearer {key}"},
         )
         with urllib.request.urlopen(req, timeout=8) as r:
@@ -119,7 +120,7 @@ def summarize(items):
     return all(x.get("ok") for x in items if x.get("required"))
 
 def pretty(items):
-    print("\n=== Prompt-to-Pill Environment Check ===\n")
+    print("\n=== DrugForge Environment Check ===\n")
     for c in items:
         status = ok("") if c["ok"] else (fail("") if c.get("required") else warn(""))
         req = "(required)" if c.get("required") else "(optional)"
@@ -131,18 +132,21 @@ def pretty(items):
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--json",action="store_true")
+    ap.add_argument("--demo", action="store_true", help="Check lightweight offline dependencies only")
+    ap.add_argument("--offline", action="store_true", help="Skip remote API connectivity check")
     args=ap.parse_args()
 
-    checks=[]
-    checks.append(check_python())
-    checks.append(check_os())
-    checks.extend(check_bins())
-    checks.extend(check_p2rank())
-    checks.extend(check_core_pkgs())
-    checks.append(check_gpu())
-    checks.append(check_api_key())
-    checks.append(check_mcp_files())
-    checks.append(check_deepseek_api())
+    checks = [check_python(args.demo), check_os(), check_mcp_files()]
+    checks.extend(check_core_pkgs(args.demo))
+    if not args.demo:
+        checks.extend(check_bins())
+        checks.extend(check_p2rank())
+        checks.append(check_gpu())
+        checks.append(check_api_key())
+        checks.append({"name": "env:PANACEA_MODEL", "ok": bool(os.environ.get("PANACEA_MODEL")),
+                       "required": True, "found": "SET" if os.environ.get("PANACEA_MODEL") else "NOT SET"})
+        if not args.offline:
+            checks.append(check_deepseek_api())
 
     ok_all = summarize(checks)
     if args.json:

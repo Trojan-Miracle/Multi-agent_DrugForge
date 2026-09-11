@@ -15,7 +15,9 @@ _panacea = {"tok": None, "model": None}
 
 def get_panacea():
     if _panacea["tok"] is None or _panacea["model"] is None:
-        PANACEA_MODEL = os.getenv("PANACEA_MODEL", "/path/to/panacea")
+        PANACEA_MODEL = os.environ.get("PANACEA_MODEL", "").strip()
+        if not PANACEA_MODEL:
+            raise RuntimeError("Set PANACEA_MODEL to your model path or repository ID")
         _panacea["tok"] = AutoTokenizer.from_pretrained(PANACEA_MODEL, padding_side="left")
         if _panacea["tok"].pad_token is None:
             _panacea["tok"].add_special_tokens({"pad_token": "[PAD]"})

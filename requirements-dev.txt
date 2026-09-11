@@ -1,0 +1,6 @@
+# Lightweight orchestration / offline demo; no GPU models required.
+langgraph==0.6.7
+langchain-openai==0.3.33
+langchain-mcp-adapters==0.1.9
+mcp==1.15.0
+pytest>=8,<9

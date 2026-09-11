@@ -4,18 +4,23 @@ state.py  ─  运行状态持久化
 每次运行生成唯一 run_id，消息实时追加写入 runs/{run_id}.json。
 """
 import json
+import os
+import re
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 RUNS_DIR = Path(__file__).parent / "runs"
-RUNS_DIR.mkdir(exist_ok=True)
 
 
 class RunState:
     def __init__(self, task: str, run_id: str | None = None):
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
-        self.path = RUNS_DIR / f"{self.run_id}.json"
+        self.path = self._path(self.run_id)
+        RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        if self.path.exists():
+            raise FileExistsError(f"Run already exists: {self.run_id}")
         self._data = {
             "run_id":      self.run_id,
             "task":        task,
@@ -23,6 +28,7 @@ class RunState:
             "finished_at": None,
             "status":      "running",
             "messages":    [],
+            "stage_results": {},
         }
         self._flush()
 
@@ -34,6 +40,14 @@ class RunState:
             "content": content,
         })
         self._flush()
+
+    def record_stages(self, stages: dict):
+        self._data["stage_results"].update(stages)
+        self._flush()
+
+    @property
+    def status(self):
+        return self._data["status"]
 
     def done(self):
         self._data["status"] = "done"
@@ -51,11 +65,26 @@ class RunState:
     def messages(self) -> list:
         return self._data["messages"]
 
+    @staticmethod
+    def _path(run_id):
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", run_id):
+            raise ValueError("Invalid run ID")
+        return RUNS_DIR / f"{run_id}.json"
+
     def _flush(self):
-        self.path.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        # Replace atomically so interrupted writes do not destroy the previous log.
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=RUNS_DIR,
+                                             prefix=".run-", suffix=".tmp", delete=False) as handle:
+                temporary = Path(handle.name)
+                json.dump(self._data, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     @classmethod
     def list_runs(cls) -> list[dict]:
@@ -76,7 +105,7 @@ class RunState:
 
     @classmethod
     def load(cls, run_id: str) -> dict:
-        return json.loads((RUNS_DIR / f"{run_id}.json").read_text(encoding="utf-8"))
+        return json.loads(cls._path(run_id).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

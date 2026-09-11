@@ -108,6 +108,7 @@ const DEFAULT_COLOR = '#607d8b';
 
 const agentCounts = {};
 let lastId = -1;
+let approvalToken = null;
 
 function colorOf(agent) {
   return COLORS[agent] || DEFAULT_COLOR;
@@ -125,7 +126,7 @@ function updateSidebar(agent) {
     badge.style.background = colorOf(agent) + '18';
     badge.innerHTML = `
       <div class="agent-dot" style="background:${colorOf(agent)}"></div>
-      <div class="agent-name" title="${agent}">${agent.replace('_agent','').replace(/_/g,' ')}</div>
+      <div class="agent-name" title="${escHtml(agent)}">${escHtml(agent).replace('_agent','').replace(/_/g,' ')}</div>
       <div class="agent-count" id="count-${agent}">0</div>
     `;
     list.appendChild(badge);
@@ -134,20 +135,8 @@ function updateSidebar(agent) {
 }
 
 function addMessage(msg) {
-  // Human-in-the-loop：显示浮层，不在时间线展示
-  if (msg.type === 'WaitingConfirm') {
-    document.getElementById('confirm-msg').textContent = msg.content;
-    const btn = document.getElementById('confirm-btn');
-    btn.disabled = false;
-    btn.textContent = '确认继续优化';
-    document.getElementById('confirm-bar').style.display = 'block';
-    return;
-  }
-
-  // 收到继续信号后隐藏确认栏
-  if (msg.type === 'System' && msg.agent === 'system') {
-    document.getElementById('confirm-bar').style.display = 'none';
-  }
+  // The status endpoint owns approval state, including after a page refresh.
+  if (msg.type === 'WaitingConfirm') return;
 
   const color = colorOf(msg.agent);
   const isToolCall = msg.content.includes('🔧');
@@ -164,8 +153,8 @@ function addMessage(msg) {
 
   div.innerHTML = `
     <div class="msg-header">
-      <span class="msg-agent" style="color:${color}">${msg.agent}</span>
-      <span class="msg-type">${msg.type}</span>
+      <span class="msg-agent" style="color:${color}">${escHtml(msg.agent)}</span>
+      <span class="msg-type">${escHtml(msg.type)}</span>
     </div>
     <div class="msg-content ${contentClass}">${escHtml(msg.content)}</div>
   `;
@@ -177,7 +166,7 @@ function addMessage(msg) {
 }
 
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 async function confirmContinue() {
@@ -185,7 +174,10 @@ async function confirmContinue() {
   btn.disabled = true;
   btn.textContent = '发送中...';
   try {
-    await fetch('/confirm', { method: 'POST' });
+    const response = await fetch('/confirm', { method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token: approvalToken}) });
+    if (!response.ok) throw new Error('Confirmation rejected');
+    approvalToken = null;
     document.getElementById('confirm-bar').style.display = 'none';
   } catch(e) {
     btn.disabled = false;
@@ -195,22 +187,36 @@ async function confirmContinue() {
 
 async function poll() {
   try {
-    const r = await fetch('/messages');
+    const [r, statusResponse] = await Promise.all([fetch('/messages'), fetch('/status')]);
+    if (!r.ok || !statusResponse.ok) throw new Error('Server error');
     const msgs = await r.json();
+    const state = await statusResponse.json();
     const newMsgs = msgs.filter(m => m.id > lastId);
     newMsgs.forEach(addMessage);
     if (newMsgs.length) lastId = newMsgs[newMsgs.length - 1].id;
     const visible = msgs.filter(m => m.type !== 'WaitingConfirm').length;
-    document.getElementById('status').textContent = `运行中 · ${visible} 条消息`;
-    document.getElementById('status').className = 'running';
+    const labels = {starting: '启动中', running: '运行中', done: '已完成', failed: '运行失败'};
+    document.getElementById('status').textContent = `${labels[state.status] || state.status} · ${visible} 条消息`;
+    document.getElementById('status').className = state.status === 'running' ? 'running' : '';
+    approvalToken = state.approval ? state.approval.token : null;
+    document.getElementById('confirm-bar').style.display = approvalToken ? 'block' : 'none';
+    if (approvalToken) {
+      document.getElementById('confirm-msg').textContent = `第 ${state.approval.round}/3 轮优化，确认后继续`;
+      const btn = document.getElementById('confirm-btn');
+      btn.disabled = false;
+      btn.textContent = '确认继续优化';
+    }
   } catch (e) {
     document.getElementById('status').textContent = '等待服务器...';
     document.getElementById('status').className = '';
   }
 }
 
-setInterval(poll, 800);
-poll();
+async function pollLoop() {
+  await poll();
+  setTimeout(pollLoop, 800);
+}
+pollLoop();
 </script>
 </body>
 </html>

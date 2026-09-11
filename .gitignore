@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+runs/
+DrugGen/
+MediTab/
+*.gguf
+*.safetensors
+output.txt
+matched_patients.json
+*.bin
+*.pt
+*.pth

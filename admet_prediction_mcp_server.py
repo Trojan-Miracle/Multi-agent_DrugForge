@@ -42,7 +42,7 @@ def _as_smiles_list(smiles):
     # fallback: force to str
     return [str(smiles).strip()]
 def _client():
-    return Client(SPACE_ID, hf_token= 'your_HF_token') #put your HF token here
+    return Client(SPACE_ID, hf_token=os.environ.get("HF_TOKEN") or None, verbose=False)
 
 @mcp.tool(
     name="chemfm_list_properties",
